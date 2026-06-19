@@ -30,19 +30,15 @@
 
 import { eventSource, event_types } from '../../../../script.js';
 
-// ⚠️ CFS-MVU bundle 用 dynamic import + catch — bundle 内部 import jsdelivr CDN
-// 拉 klona/pinia/compare-versions，加载失败不能阻塞 CFS-Suite 其他模块。
-// 上一笔静态 import './cfs-mvu/bundle.js' 让 bundle throw 时整个 ESM module graph 死掉。
-import('./cfs-mvu/bundle.js')
-    .then(() => console.log('[CFS-Suite] cfs-mvu/bundle.js 加载成功（MVU 接管即将生效）'))
-    .catch((e) => {
-        console.warn(
-            '[CFS-Suite] cfs-mvu/bundle.js 加载失败 — MVU 接管功能（_cfsEdition / exclusive_mode 等）失效',
-            '可能原因：jsdelivr CDN 不通 / 网络墙 / 证书错误',
-            'CFS-Suite 其他 16 项模块照常运行（v4.x 接管层 + 浮动胶囊 + UI 守护）',
-            e,
-        );
-    });
+// ⚠️ CFS-MVU bundle 加载暂时禁用（spec 路线重审中）
+// 现状：bundle 是酒馆助手专用格式，依赖一堆酒馆助手特有 API（getTavernHelperVersion /
+//   getButtonEvent / SillyTavern.saveChat / eventEmit 全套 ~30+ 个），polyfill 补不完。
+// 决策：等用户拍板新方案 — fork ST 原生 MVU 扩展 / 让 MVU 仍走酒馆助手脚本 / 重写为原生扩展
+// 详见：D:\Silly\LOG\2026-06-19-cfs-mvu-route-rethink.md（待写）
+// 当前：CFS-Suite 仍跑 16 项 v4.x 接管层 + 浮动胶囊；MVU 用户自管（酒馆助手脚本/卡级 MVU）
+// import('./cfs-mvu/bundle.js') ... 已禁用
+
+console.log('[CFS-Suite] cfs-mvu/bundle.js 加载已暂禁 — 等待 MVU 路线重审');
 
 // 完整加载链（importing kernel.js 会链式拉起其他依赖）
 import { Coordinator, SessionGate, NotificationCenter } from './cfs/core/kernel.js';
@@ -83,15 +79,15 @@ eventSource.once(event_types.APP_READY, () => {
         PSIS: !!PSIS,
         SEM: !!SEM,
         PSISPlus: !!PSISPlus,
-        // Day 6 fix — CFS-MVU bundle 是否真正 init（Day 1-5 漏了 import）
-        CFSMvuBundle: !!window.Mvu?._cfsEdition,
+        // CFSMvuBundle 检查暂时移除（bundle 加载已禁用，等 MVU 路线重审）
         CFS4Version: window.CFS4?.version,
-        MvuCfsEdition: window.Mvu?._cfsEdition?.version ?? '<未 init>',
+        MvuExists: !!window.Mvu,
+        MvuCfsEdition: window.Mvu?._cfsEdition?.version ?? '<不是 CFS-MVU>',
     };
     console.log(`${TAG} APP_READY confirmed`, status);
 
     const allReady = Object.entries(status)
-        .filter(([k]) => k !== 'CFS4Version' && k !== 'MvuCfsEdition')
+        .filter(([k]) => k !== 'CFS4Version' && k !== 'MvuCfsEdition' && k !== 'MvuExists')
         .every(([, v]) => v);
 
     if (typeof toastr !== 'undefined') {
@@ -104,7 +100,7 @@ eventSource.once(event_types.APP_READY, () => {
             );
         } else {
             const missing = Object.entries(status)
-                .filter(([k, v]) => k !== 'CFS4Version' && k !== 'MvuCfsEdition' && !v)
+                .filter(([k, v]) => k !== 'CFS4Version' && k !== 'MvuCfsEdition' && k !== 'MvuExists' && !v)
                 .map(([k]) => k);
             toastr.error(
                 `CFS Suite v${VERSION} — 加载异常，缺：${missing.join(', ')}（看 F12）`,
