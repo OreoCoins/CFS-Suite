@@ -386,6 +386,129 @@ function _escapeHtml(s) {
         .replace(/>/g, '&gt;');
 }
 
+// ===== Day 7-5: CFS-MVU 安装状态 + 一键引导 =====
+const CFS_MVU_GITHUB_URL = 'https://github.com/OreoCoins/CFS-MVU';
+const _cfsMvuStatus = { installed: null, version: null, lastCheckedAt: 0 };
+
+async function _detectCfsMvuInstalled() {
+    try {
+        const response = await fetch('/api/extensions/discover', {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store',
+        });
+        if (!response.ok) return false;
+        const list = await response.json();
+        if (!Array.isArray(list)) return false;
+        return list.some(item => item?.name?.includes('CFS-MVU') || item?.name?.endsWith('/CFS-MVU'));
+    } catch (e) {
+        console.warn('[CFS-Suite/ui] detect CFS-MVU failed', e);
+        return false;
+    }
+}
+
+async function _refreshCfsMvuStatus(panel) {
+    _cfsMvuStatus.installed = await _detectCfsMvuInstalled();
+    _cfsMvuStatus.version = window.Mvu?._cfsEdition?.version ?? null;
+    _cfsMvuStatus.lastCheckedAt = Date.now();
+    const el = panel?.querySelector?.('.mvu-status-line');
+    if (el) el.innerHTML = _renderMvuStatusLine();
+}
+
+function _renderMvuStatusLine() {
+    if (_cfsMvuStatus.installed === null) {
+        return '<span class="v info">检测中…</span>';
+    }
+    if (_cfsMvuStatus.installed) {
+        const v = _cfsMvuStatus.version
+            ? `<span class="v ok">✓ 已装 (v${_cfsMvuStatus.version})</span>`
+            : `<span class="v warn">✓ 装了但 bundle 未 init</span>`;
+        return v;
+    }
+    return '<span class="v err">✗ 未装</span>';
+}
+
+async function _installCfsMvu(panel) {
+    _pushLog(panel, '📦 安装 CFS-MVU 中…', 'info');
+    try {
+        const response = await fetch('/api/extensions/install', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: CFS_MVU_GITHUB_URL, global: true }),
+        });
+        const text = await response.text();
+        if (!response.ok) throw new Error(text || `${response.status}`);
+        _pushLog(panel, '✅ CFS-MVU 安装成功，3 秒后自动刷新 ST 加载新扩展', 'success');
+        setTimeout(() => location.reload(), 3000);
+    } catch (e) {
+        _pushLog(panel, '❌ 安装失败：' + (e?.message ?? e), 'error');
+        _pushLog(panel, `  ↳ 可手动装：在 ST 扩展安装界面粘贴 ${CFS_MVU_GITHUB_URL}`, 'info');
+    }
+}
+
+async function _copyCfsMvuUrl(panel) {
+    try {
+        await navigator.clipboard.writeText(CFS_MVU_GITHUB_URL);
+        _pushLog(panel, `📋 已复制 git URL 到剪贴板：${CFS_MVU_GITHUB_URL}`, 'success');
+    } catch {
+        _pushLog(panel, `📋 复制失败 — git URL：${CFS_MVU_GITHUB_URL}`, 'warn');
+    }
+}
+
+// ===== Day 7-6: 扫描禁用其他 MVU 脚本（酒馆助手 API） =====
+
+async function _scanAndDisableOtherMvu(panel) {
+    const TH = window.TavernHelper;
+    if (!TH?.getScripts) {
+        _pushLog(panel, '❌ 酒馆助手未装或 TavernHelper.getScripts 不可用', 'error');
+        return;
+    }
+    _pushLog(panel, '🔍 扫描酒馆助手脚本库…', 'info');
+    try {
+        const scripts = await TH.getScripts();
+        if (!Array.isArray(scripts)) {
+            _pushLog(panel, '❌ TavernHelper.getScripts 返非数组', 'error');
+            return;
+        }
+        // 找名字含 MVU/MagVar/变量框架 但不含 CFS-MVU 自己的标识
+        const isMvuScript = (s) => {
+            const name = (s.name || '').toLowerCase();
+            const isMvu = /mvu|magvar|变量框架|variable.?framework/i.test(name);
+            const isCfsMvu = /cfs[-_ ]?mvu|cfs[-_ ]?suite/i.test(name);
+            return isMvu && !isCfsMvu;
+        };
+        const targets = scripts.filter(s => isMvuScript(s) && s.enabled !== false);
+        if (targets.length === 0) {
+            _pushLog(panel, '✅ 未发现其他启用的 MVU 脚本，无需禁用', 'success');
+            return;
+        }
+        const names = targets.map(s => `「${s.name}」`).join(' / ');
+        if (!confirm(`找到 ${targets.length} 个启用的非 CFS-MVU 脚本：\n${names}\n\n确定禁用？（仅运行时禁用，不删脚本）`)) {
+            _pushLog(panel, '⏸ 用户取消禁用操作', 'warn');
+            return;
+        }
+        let disabled = 0;
+        for (const s of targets) {
+            try {
+                if (typeof TH.updateScript === 'function') {
+                    await TH.updateScript({ id: s.id, enabled: false });
+                } else if (typeof TH.disableScript === 'function') {
+                    await TH.disableScript(s.id);
+                } else {
+                    throw new Error('TavernHelper 没 updateScript/disableScript API');
+                }
+                disabled++;
+                _pushLog(panel, `  ↳ 已禁用：${s.name}`, 'success');
+            } catch (e) {
+                _pushLog(panel, `  ↳ 禁用失败 ${s.name}: ${e?.message ?? e}`, 'error');
+            }
+        }
+        _pushLog(panel, `🚫 完成：禁用 ${disabled}/${targets.length} 个脚本（F5 后生效）`, 'success');
+    } catch (e) {
+        _pushLog(panel, '❌ 扫描失败：' + (e?.message ?? e), 'error');
+    }
+}
+
 function _renderPanel(panel) {
     const status = _moduleStatus();
     const phase = window.CFS4?.Coordinator?.getState?.()?.phase ?? 'unknown';
@@ -427,12 +550,22 @@ function _renderPanel(panel) {
     }
     html += '</div>';
 
+    // Day 7-5: CFS-MVU 套餐状态 section
+    html += '<div class="section">';
+    html += '<div class="section-title">MVU 套餐</div>';
+    html += '<div class="row"><span class="k">CFS-MVU 扩展</span><span class="mvu-status-line">' + _renderMvuStatusLine() + '</span></div>';
+    html += '</div>';
+
     // 操作按钮 — 用人话
     html += '<div class="actions">';
     html += '<button id="cfs-act-enable" class="primary">🥵 启用接管</button>';
     html += '<button id="cfs-act-disable">⏸ 关闭接管</button>';
     html += '<button id="cfs-act-audit">🔍 重新校验 entry 位置</button>';
     html += '<button id="cfs-act-ls-clear" class="danger">🗑️ 清空 Path 缓存</button>';
+    // Day 7-5/7-6
+    html += '<button id="cfs-act-install-mvu" class="primary">📦 一键装 CFS-MVU</button>';
+    html += '<button id="cfs-act-copy-mvu-url">📋 复制 CFS-MVU URL</button>';
+    html += '<button id="cfs-act-scan-mvu" class="danger">🚫 扫描禁用其他 MVU</button>';
     html += '</div>';
 
     // 持久化日志框（按钮下方，记 CFS 操作提示历史，不消失）
@@ -548,4 +681,12 @@ function _renderPanel(panel) {
         _logHistory.length = 0;
         _renderLogBox(panel);
     });
+
+    // Day 7-5/7-6 事件
+    panel.querySelector('#cfs-act-install-mvu')?.addEventListener('click', () => _installCfsMvu(panel));
+    panel.querySelector('#cfs-act-copy-mvu-url')?.addEventListener('click', () => _copyCfsMvuUrl(panel));
+    panel.querySelector('#cfs-act-scan-mvu')?.addEventListener('click', () => _scanAndDisableOtherMvu(panel));
+
+    // 异步刷新 CFS-MVU 状态
+    _refreshCfsMvuStatus(panel);
 }
