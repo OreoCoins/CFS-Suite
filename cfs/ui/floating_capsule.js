@@ -486,12 +486,17 @@ function _flattenScriptTrees(trees) {
 }
 
 async function _scanAndDisableOtherMvu(panel) {
-    // 酒馆助手真实 API：getScriptTrees + updateScriptTreesWith（不是 getScripts）
-    const getTrees = window.getScriptTrees;
-    const updateTreesWith = window.updateScriptTreesWith;
+    // 酒馆助手把 getScriptTrees / updateScriptTreesWith 仅暴露给 iframe 内脚本，
+    // 主页面 window.TavernHelper 不包含这些方法。
+    // 优先用 TavernHelper 直接挂的 namespace（若存在），否则降级到引导手动禁
+    const TH = window.TavernHelper;
+    const getTrees = TH?.getScriptTrees ?? window.getScriptTrees;
+    const updateTreesWith = TH?.updateScriptTreesWith ?? window.updateScriptTreesWith;
     if (typeof getTrees !== 'function' || typeof updateTreesWith !== 'function') {
-        _pushLog(panel, '❌ 酒馆助手 API 不可用（缺 getScriptTrees / updateScriptTreesWith）', 'error');
-        _pushLog(panel, '  ↳ 请确认已装酒馆助手（JS-Slash-Runner）', 'info');
+        _pushLog(panel, '⚠️ 酒馆助手 API 不在 ST 主页面暴露（只在 iframe 内可用）', 'warn');
+        _pushLog(panel, '  ↳ 请手动操作：扩展面板 → 酒馆助手 → 脚本管理', 'info');
+        _pushLog(panel, '  ↳ 找含「MVU/MagVar/变量框架」名字的脚本（排除 CFS-MVU）', 'info');
+        _pushLog(panel, '  ↳ 点关闭按钮禁用，F5 ST 后生效', 'info');
         return;
     }
     _pushLog(panel, '🔍 扫描酒馆助手脚本（global + character + preset）…', 'info');
