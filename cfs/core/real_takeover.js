@@ -887,5 +887,13 @@ void _r;
 
 
 
-export const RealTakeover = window.CFS4?.RealTakeover;
-console.log('[CFS-Suite/real-takeover] RealTakeover ESM bridge OK');
+// Real Takeover IIFE 不挂独立 CFS4.RealTakeover，而是把 bootstrapTakeover / detectTakeoverState
+// 等方法 attach 到 CFS4.InjectionStrategy 上。导出"Takeover 已就位"的判据 = IS 上有这些方法。
+export const RealTakeover = window.CFS4?.InjectionStrategy?.bootstrapTakeover
+    ? {
+        bootstrapTakeover: window.CFS4.InjectionStrategy.bootstrapTakeover,
+        detectTakeoverState: window.CFS4.InjectionStrategy.detectTakeoverState,
+        _attachedTo: 'CFS4.InjectionStrategy',
+    }
+    : null;
+console.log('[CFS-Suite/real-takeover] RealTakeover ESM bridge OK (attached to InjectionStrategy)');
