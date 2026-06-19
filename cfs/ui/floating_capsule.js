@@ -451,6 +451,42 @@ function _setFullRefreshInterval(n) {
     catch { }
 }
 
+// ===== Day 10: 自动 Stable Promotion 配置（Slow Promote / Fast Demote / Periodic Decay）=====
+const LS_AP_ENABLED = 'cfs-suite/auto_promote_enabled';
+const LS_AP_PROMOTE_AFTER = 'cfs-suite/auto_promote_after_rounds';
+const LS_AP_THRASH_LOCK = 'cfs-suite/auto_promote_thrash_lock';
+const LS_AP_VOLATILE_RE = 'cfs-suite/auto_promote_volatile_whitelist';
+const LS_AP_DECAY_EVERY = 'cfs-suite/auto_promote_decay_every_n';
+const DEFAULT_AP_VOLATILE_RE = '(HP$|SAN$|当前|状态$|位置$|余额|经验|欲望|淫乱|堕落|进度|count$|cnt$|time$|timestamp|round|tick)';
+
+function _getAutoPromoteCfg() {
+    try {
+        const rawEnabled = localStorage.getItem(LS_AP_ENABLED);
+        return {
+            enabled: rawEnabled === null ? true : (rawEnabled !== '0'),
+            promoteAfter: parseInt(localStorage.getItem(LS_AP_PROMOTE_AFTER) || '20', 10) || 20,
+            thrashLock: parseInt(localStorage.getItem(LS_AP_THRASH_LOCK) || '3', 10) || 3,
+            decayEveryN: parseInt(localStorage.getItem(LS_AP_DECAY_EVERY) || '100', 10) || 100,
+            whitelistRe: localStorage.getItem(LS_AP_VOLATILE_RE) || DEFAULT_AP_VOLATILE_RE,
+        };
+    } catch {
+        return { enabled: true, promoteAfter: 20, thrashLock: 3, decayEveryN: 100, whitelistRe: DEFAULT_AP_VOLATILE_RE };
+    }
+}
+function _setAutoPromoteCfg(patch) {
+    try {
+        if ('enabled' in patch) localStorage.setItem(LS_AP_ENABLED, patch.enabled ? '1' : '0');
+        if ('promoteAfter' in patch) localStorage.setItem(LS_AP_PROMOTE_AFTER, String(Math.max(1, parseInt(patch.promoteAfter, 10) || 20)));
+        if ('thrashLock' in patch) localStorage.setItem(LS_AP_THRASH_LOCK, String(Math.max(1, parseInt(patch.thrashLock, 10) || 3)));
+        if ('decayEveryN' in patch) localStorage.setItem(LS_AP_DECAY_EVERY, String(Math.max(0, parseInt(patch.decayEveryN, 10) || 0)));
+        if ('whitelistRe' in patch) localStorage.setItem(LS_AP_VOLATILE_RE, String(patch.whitelistRe || DEFAULT_AP_VOLATILE_RE));
+    } catch {}
+}
+function _getAutoPromoteState() {
+    try { return window.CFS4?.InjectionStrategy?.getAutoPromoteState?.() || null; }
+    catch { return null; }
+}
+
 function _getCsrfHeaders() {
     // ST 真 getRequestHeaders 带 CSRF token；window.getRequestHeaders 由 polyfill 或 ST 提供
     try {
@@ -650,18 +686,51 @@ function _renderPanel(panel) {
     }
     html += '</div>';
 
-    // 模块明细（可折叠）
+    // Day 10: 模块明细（默认折叠 / 有未挂模块时自动展开 + 标红）
+    const totalMods = Object.keys(status).length;
+    const failedMods = Object.entries(status).filter(([_, v]) => !v).map(([k]) => k);
+    const failedCount = failedMods.length;
+    const modDetailOpen = failedCount > 0 ? ' open' : ''; // 出错自动展开
+    const modSummaryColor = failedCount > 0 ? 'color:#e88' : 'color:#7c7';
+    const modSummaryIcon = failedCount > 0 ? `⚠️ ${failedCount} 项未挂` : `✓ 全部 ${totalMods} 项已挂`;
     html += '<div class="section">';
-    html += '<div class="section-title">模块明细（13 项）</div>';
+    html += `<details class="cfs-mod-details"${modDetailOpen}>`;
+    html += `<summary style="${modSummaryColor};cursor:pointer;font-size:11px;padding:4px 0">📦 模块明细 — <b>${modSummaryIcon}</b><span style="color:#888;font-size:10px;margin-left:6px">(点击展开)</span></summary>`;
+    html += '<div style="padding-top:6px">';
     for (const [k, v] of Object.entries(status)) {
-        html += `<div class="row"><span class="k">${k}</span><span class="v ${v ? 'ok' : 'err'}">${v ? '✓ 已挂' : '✗ 未挂'}</span></div>`;
+        const rowStyle = !v ? 'background:#3a1f20;border-left:2px solid #e88;padding-left:6px' : '';
+        html += `<div class="row" style="${rowStyle}"><span class="k">${k}</span><span class="v ${v ? 'ok' : 'err'}">${v ? '✓ 已挂' : '✗ 未挂'}</span></div>`;
     }
+    html += '</div></details>';
     html += '</div>';
 
-    // Day 7-5: CFS-MVU 套餐状态 section
+    // Day 7-5: CFS-MVU 套餐状态 section（默认折叠）
+    const mvuInstalled = !!window.Mvu?._cfsEdition;
+    const mvuSummaryColor = mvuInstalled ? 'color:#7c7' : 'color:#e88';
+    const mvuSummaryIcon = mvuInstalled ? '✓ CFS-MVU 已就位' : '⚠️ CFS-MVU 未装';
+    const mvuDetailOpen = mvuInstalled ? '' : ' open';
     html += '<div class="section">';
-    html += '<div class="section-title">MVU 套餐</div>';
+    html += `<details class="cfs-mvu-details"${mvuDetailOpen}>`;
+    html += `<summary style="${mvuSummaryColor};cursor:pointer;font-size:11px;padding:4px 0">🧬 MVU 套餐 — <b>${mvuSummaryIcon}</b></summary>`;
+    html += '<div style="padding-top:6px">';
     html += '<div class="row"><span class="k">CFS-MVU 扩展</span><span class="mvu-status-line">' + _renderMvuStatusLine() + '</span></div>';
+    html += '</div></details>';
+    html += '</div>';
+
+    // Day 10 修复 Day 5 假替代：PSIS / PSIS+ / SEM 入口 section
+    // 之前 polyfill 注释说"用浮动胶囊替代"但根本没接 — 现在补上
+    // 注意：PSIS+ / SEM 的 renderSection() 输出本身就是 <details>，外层不再套，否则要点两次
+    html += '<div class="section">';
+    html += '<div class="section-title">MVU 守护面板（PSIS / PSIS+ / SEM）</div>';
+    html += '<div class="hint" style="margin:4px 0 8px 0">• 下方两块自带展开/收起，点击 summary 标题即可显示按钮和操作<br>• PSIS 三大块（数据库 / MVU / 动态注入）扫描归零功能较重，走独立弹窗</div>';
+    // PSIS+ 直接 mount（它自己的 <details> 会作为第一层）
+    html += '<div id="cfs-capsule-psisplus-mount" style="margin-top:6px"></div>';
+    // SEM 直接 mount
+    html += '<div id="cfs-capsule-sem-mount" style="margin-top:6px"></div>';
+    // PSIS 三大块全功能面板（独立弹窗，不嵌入避免胶囊爆炸）
+    html += '<div class="row" style="margin-top:10px;justify-content:center">';
+    html += '<button id="cfs-act-psis-panel" class="primary" style="padding:4px 14px;font-size:11px;width:auto;margin:0">打开完整 MVU 守护面板（PSIS 三大块 + 系统接口管理）</button>';
+    html += '</div>';
     html += '</div>';
 
     // Day 9: Full Refresh 长期记忆锚点配置 section
@@ -677,6 +746,58 @@ function _renderPanel(panel) {
     html += `<input type="number" id="cfs-fr-interval" value="${frInterval}" min="0" max="9999" style="width:80px;background:#0e0e0f;color:#e0e0e0;border:1px solid #444;border-radius:4px;padding:3px 6px;font-size:11px"> <button id="cfs-fr-save" style="padding:2px 8px;font-size:10px;width:auto;margin:0 0 0 4px">保存</button>`;
     html += '</div>';
     html += '<div class="hint" style="margin-top:4px">• 0 = 关闭（默认）• 20 = 高频刷新 • 50 = 中等 • 100 = 稀刷 • 越小 cache miss 越多，但 LLM 越不容易失忆</div>';
+    html += '</div>';
+
+    // Day 10: 自动 Stable Promotion 配置 section
+    const apCfg = _getAutoPromoteCfg();
+    const apState = _getAutoPromoteState();
+    const apLast = apState?.last;
+    const apTotals = apState?.totals || { promoted: 0, demoted: 0, decayed: 0 };
+    const apStatusLine = apCfg.enabled
+        ? `<span class="v ok">已开启 — 已识别 ${apTotals.promoted} 个稳态字段 / 撤销了 ${apTotals.demoted} 次${apTotals.decayed ? ' / 重置 ' + apTotals.decayed + ' 次' : ''}</span>`
+        : '<span class="v warn">已关闭 — 不优化，所有字段都当变化字段处理</span>';
+    const apLastLine = apLast
+        ? `<span class="v">第 ${apLast.round} 轮 / 查了 ${apLast.scanned} 个字段 / 本轮新认 ${apLast.promoted} 个 / 撤销 ${apLast.demoted} 个${apLast.locked ? ' / 已放弃 ' + apLast.locked + ' 个' : ''}</span>`
+        : '<span class="v warn">尚未开始</span>';
+    // Day 10 第三轮 UX 优化：每项配置独立成行，label 在上 input 在下，去掉 promote/demote/volatile/decay 术语换人话
+    html += '<div class="section">';
+    html += '<div class="section-title">自动识别稳态字段（Day 10）</div>';
+    html += `<div class="row" style="margin-top:4px"><span class="k">当前状态</span>${apStatusLine}</div>`;
+    html += `<div class="row"><span class="k">上次扫描</span>${apLastLine}</div>`;
+    // 开关
+    html += '<div style="margin-top:10px;padding:8px;background:#0e0e0f;border-radius:4px;border:1px solid #2a2a30">';
+    html += `<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;color:#e0e0e0"><input type="checkbox" id="cfs-ap-enabled" ${apCfg.enabled ? 'checked' : ''} style="width:14px;height:14px"> <b>启用自动识别</b> <span style="color:#888;font-size:10px">(关掉 = 完全不优化)</span></label>`;
+    html += '</div>';
+    // 三个数字配置 — 每项一个块，标题在上输入在下
+    html += '<div style="margin-top:8px;display:flex;flex-direction:column;gap:8px">';
+    // 1. 多少轮算稳态
+    html += '<div style="padding:6px 8px;background:#0e0e0f;border-radius:4px;border:1px solid #2a2a30">';
+    html += '<div style="font-size:11px;color:#e0e0e0;margin-bottom:4px"><b>① 多少轮没变化才算稳态字段？</b></div>';
+    html += `<div style="display:flex;align-items:center;gap:8px"><input type="number" id="cfs-ap-promote-after" value="${apCfg.promoteAfter}" min="1" max="9999" style="width:60px;background:#1a1a1f;color:#e0e0e0;border:1px solid #444;border-radius:3px;padding:3px 6px;font-size:11px"><span style="font-size:10px;color:#888">轮 — 越小越激进、越快省 token；推荐 20</span></div>`;
+    html += '</div>';
+    // 2. 反复几次放弃
+    html += '<div style="padding:6px 8px;background:#0e0e0f;border-radius:4px;border:1px solid #2a2a30">';
+    html += '<div style="font-size:11px;color:#e0e0e0;margin-bottom:4px"><b>② 一个字段反复变化几次就放弃尝试？</b></div>';
+    html += `<div style="display:flex;align-items:center;gap:8px"><input type="number" id="cfs-ap-thrash-lock" value="${apCfg.thrashLock}" min="1" max="99" style="width:60px;background:#1a1a1f;color:#e0e0e0;border:1px solid #444;border-radius:3px;padding:3px 6px;font-size:11px"><span style="font-size:10px;color:#888">次 — 防止跳来跳去打断缓存；推荐 3</span></div>`;
+    html += '</div>';
+    // 3. 多少轮重置
+    html += '<div style="padding:6px 8px;background:#0e0e0f;border-radius:4px;border:1px solid #2a2a30">';
+    html += '<div style="font-size:11px;color:#e0e0e0;margin-bottom:4px"><b>③ 多少轮重置一次"放弃记录"？</b></div>';
+    html += `<div style="display:flex;align-items:center;gap:8px"><input type="number" id="cfs-ap-decay" value="${apCfg.decayEveryN}" min="0" max="9999" style="width:60px;background:#1a1a1f;color:#e0e0e0;border:1px solid #444;border-radius:3px;padding:3px 6px;font-size:11px"><span style="font-size:10px;color:#888">轮 — 让早期被放弃的字段有机会重试；推荐 100，填 0 = 永不重置</span></div>`;
+    html += '</div>';
+    // 4. 黑名单字段
+    html += '<div style="padding:6px 8px;background:#0e0e0f;border-radius:4px;border:1px solid #2a2a30">';
+    html += '<div style="font-size:11px;color:#e0e0e0;margin-bottom:4px"><b>④ 这些字段永远不要认作稳态（正则）</b></div>';
+    html += `<textarea id="cfs-ap-whitelist" rows="2" style="width:100%;box-sizing:border-box;background:#1a1a1f;color:#e0e0e0;border:1px solid #444;border-radius:3px;padding:4px 6px;font-size:10px;font-family:monospace;resize:vertical">${(apCfg.whitelistRe || '').replace(/</g, '&lt;')}</textarea>`;
+    html += '<div style="font-size:10px;color:#888;margin-top:3px">HP/SAN/当前位置/时间戳 这类每轮可能变的字段已默认覆盖</div>';
+    html += '</div>';
+    html += '</div>';
+    // 按钮行
+    html += '<div style="margin-top:10px;display:flex;justify-content:flex-end;gap:6px">';
+    html += '<button id="cfs-ap-reset" style="padding:4px 12px;font-size:11px;width:auto;margin:0">重置识别结果</button>';
+    html += '<button id="cfs-ap-save" class="primary" style="padding:4px 14px;font-size:11px;width:auto;margin:0">保存配置</button>';
+    html += '</div>';
+    html += '<div class="hint" style="margin-top:6px">• 第一次开新卡至少要聊 ① 配的轮数才会开始省 token<br>• 字段一旦认作稳态后，剧情里它真变了会立刻撤销（保证数据正确）<br>• 关掉总开关 = 完全不优化（默认 81% 命中率天花板），开启后期望命中率回升 90%+</div>';
     html += '</div>';
 
     // 操作按钮 — 用人话
@@ -711,6 +832,52 @@ function _renderPanel(panel) {
 
     // 渲染日志框（panel 重渲染后历史不丢）
     _renderLogBox(panel);
+
+    // Day 10 修复 Day 5 假替代：挂 PSIS+ / SEM section 到胶囊（用各模块自己的 renderSection 拿 HTML）
+    // PSIS+/SEM bindEvents 签名是 (document, getPanel) — 它们用 ID 查元素（cfs-psisp-root / cfs-sem-root 都是全局唯一）
+    try {
+        const psisPlus = window.CFS4?.PSISPlus;
+        const psisPlusMount = panel.querySelector('#cfs-capsule-psisplus-mount');
+        if (psisPlus?.renderSection && psisPlusMount) {
+            psisPlusMount.innerHTML = psisPlus.renderSection();
+            if (typeof psisPlus.bindEvents === 'function') {
+                try { psisPlus.bindEvents(document, () => panel); }
+                catch (eP) { console.warn('[CFS-Suite] PSIS+ bindEvents 失败', eP); }
+            }
+        } else if (psisPlusMount) {
+            psisPlusMount.innerHTML = '<div style="color:#e88;padding:8px">⚠️ CFS4.PSISPlus 未挂，看 F12 [CFS v4.9.3 PSIS Plus] 启动日志</div>';
+        }
+    } catch (eP) { console.warn('[CFS-Suite] 挂 PSIS+ section 失败', eP); }
+
+    try {
+        const sem = window.CFS4?.SEM;
+        const semMount = panel.querySelector('#cfs-capsule-sem-mount');
+        if (sem?.renderSection && semMount) {
+            semMount.innerHTML = sem.renderSection();
+            if (typeof sem.bindEvents === 'function') {
+                try { sem.bindEvents(document, () => panel); }
+                catch (eS) { console.warn('[CFS-Suite] SEM bindEvents 失败', eS); }
+            }
+        } else if (semMount) {
+            semMount.innerHTML = '<div style="color:#e88;padding:8px">⚠️ CFS4.SEM 未挂，看 F12 [CFS v4.9.1 SEM] 启动日志</div>';
+        }
+    } catch (eS) { console.warn('[CFS-Suite] 挂 SEM section 失败', eS); }
+
+    // PSIS 完整面板入口（独立弹窗，调 CFS4.PSIS.openPanel）
+    panel.querySelector('#cfs-act-psis-panel')?.addEventListener('click', () => {
+        const psis = window.CFS4?.PSIS;
+        if (typeof psis?.openPanel !== 'function') {
+            _pushLog(panel, 'CFS4.PSIS.openPanel 未挂载（看 F12 [CFS v3.0] 启动日志确认 PSIS 模块是否加载）', 'error');
+            return;
+        }
+        try {
+            psis.openPanel();
+            _pushLog(panel, 'MVU 守护面板已打开（拖标题栏移动 / ESC 关闭）', 'success');
+        } catch (e) {
+            _pushLog(panel, '打开失败：' + (e?.message || e), 'error');
+            console.error(e);
+        }
+    });
 
     // 绑事件
     panel.querySelector('#cfs-act-enable')?.addEventListener('click', () => {
@@ -809,6 +976,43 @@ function _renderPanel(panel) {
     panel.querySelector('#cfs-act-install-mvu')?.addEventListener('click', () => _installCfsMvu(panel));
     panel.querySelector('#cfs-act-copy-mvu-url')?.addEventListener('click', () => _copyCfsMvuUrl(panel));
     panel.querySelector('#cfs-act-scan-mvu')?.addEventListener('click', () => _scanAndDisableOtherMvu(panel));
+
+    // Day 10: 自动 Stable Promotion 配置保存
+    panel.querySelector('#cfs-ap-save')?.addEventListener('click', () => {
+        const enabled = !!panel.querySelector('#cfs-ap-enabled')?.checked;
+        const promoteAfter = parseInt(panel.querySelector('#cfs-ap-promote-after')?.value, 10) || 20;
+        const thrashLock = parseInt(panel.querySelector('#cfs-ap-thrash-lock')?.value, 10) || 3;
+        const decayEveryN = parseInt(panel.querySelector('#cfs-ap-decay')?.value, 10) || 0;
+        const whitelistRe = panel.querySelector('#cfs-ap-whitelist')?.value?.trim() || DEFAULT_AP_VOLATILE_RE;
+        // 校验正则可编译
+        try { new RegExp(whitelistRe); }
+        catch (e) {
+            _pushLog(panel, '❌ volatile 白名单正则无效：' + (e?.message || e), 'error');
+            return;
+        }
+        _setAutoPromoteCfg({ enabled, promoteAfter, thrashLock, decayEveryN, whitelistRe });
+        _pushLog(panel,
+            `✓ 自动 promotion 配置已保存：${enabled ? '开启' : '关闭'} / promote@${promoteAfter}轮 / 抖动锁${thrashLock} / decay@${decayEveryN}轮`,
+            enabled ? 'success' : 'warn');
+        setTimeout(() => _renderPanel(panel), 300);
+    });
+
+    // Day 10: 重置计数（救场用，把所有 path 的 promote/demote/stable_rounds 归零）
+    panel.querySelector('#cfs-ap-reset')?.addEventListener('click', () => {
+        const is = window.CFS4?.InjectionStrategy;
+        if (!is?.resetAutoPromoteCounters) {
+            _pushLog(panel, 'InjectionStrategy.resetAutoPromoteCounters 不可用', 'error');
+            return;
+        }
+        if (!confirm('确认重置所有 path 的 promote/demote/stable_rounds 计数？\n(已升 stable 的 path 保留 stable 标记，仅清零观察计数器)')) return;
+        try {
+            const r = is.resetAutoPromoteCounters();
+            _pushLog(panel, `🔄 已重置 ${r.reset} 个 path 的观察计数`, 'success');
+        } catch (e) {
+            _pushLog(panel, '重置失败：' + (e?.message || e), 'error');
+        }
+        setTimeout(() => _renderPanel(panel), 300);
+    });
 
     // Day 9: Full Refresh 配置保存
     panel.querySelector('#cfs-fr-save')?.addEventListener('click', () => {

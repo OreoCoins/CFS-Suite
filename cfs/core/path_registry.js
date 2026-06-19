@@ -217,12 +217,22 @@ void _cfsPolyfillReport;
  last_round: opts.round != null ? opts.round : 0,
  last_present_round: 0,
  change_count: 0,
- stability_class: opts.stability_class || 'volatile'
+ stability_class: opts.stability_class || 'volatile',
+ // CFS v5.0 Day 10: 自动观察四件套（Slow Promote / Fast Demote）
+ stable_rounds: 0,
+ last_change_round: 0,
+ promote_count: 0,
+ demote_count: 0
  };
  } else {
  // 重注册：只更新 schema_ref 和 path（人类可读路径）；其他保留
  _registry[pathId].schema_ref = schemaRef;
  if (opts.path) _registry[pathId].path = opts.path;
+ // 老数据兼容：load 进来缺四件套字段时补 0（一次性）
+ if (_registry[pathId].stable_rounds == null) _registry[pathId].stable_rounds = 0;
+ if (_registry[pathId].last_change_round == null) _registry[pathId].last_change_round = 0;
+ if (_registry[pathId].promote_count == null) _registry[pathId].promote_count = 0;
+ if (_registry[pathId].demote_count == null) _registry[pathId].demote_count = 0;
  }
  _persistRegistry();
  return _registry[pathId];

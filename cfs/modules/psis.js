@@ -875,20 +875,9 @@ void _r;
  '</div>' +
  '<div class="cfs-mvu-tip">💡 典型生命周期：<b>开新卡前</b> → AI 第一轮 → <b>关 initvar</b>。</div>' +
  '</div></details>';
- // v4.9 SEM section
- try {
-  const _semNs = (window.parent && window.parent.CFS4 && window.parent.CFS4.SEM) || (window.CFS4 && window.CFS4.SEM);
-  if (_semNs && typeof _semNs.renderSection === 'function') {
-   html += _semNs.renderSection();
-  }
- } catch (eSem) { console.warn('[CFS] SEM renderSection 失败', eSem); }
- // v4.9.2 PSIS Plus section
- try {
-  const _ppNs = (window.parent && window.parent.CFS4 && window.parent.CFS4.PSISPlus) || (window.CFS4 && window.CFS4.PSISPlus);
-  if (_ppNs && typeof _ppNs.renderSection === 'function') {
-   html += _ppNs.renderSection();
-  }
- } catch (ePp) { console.warn('[CFS] PSIS Plus renderSection 失败', ePp); }
+ // Day 10 修复 ID 冲突：胶囊已挂 PSIS+/SEM section（同 ID cfs-psisp-root/cfs-sem-root）
+ // 完整面板里不再重复渲染，否则 document.getElementById 只能拿到第一份，第二份按钮全失活
+ // SEM/PSIS+ 完整功能从胶囊次级菜单进；本完整面板只保留三大块 + MVU 接口管理
  return html;
  }
 
@@ -1227,6 +1216,42 @@ void _r;
  console.error('[CFS v3.0] 注册按钮失败：', e);
  if (T) T.error('CFS v3.0 注册按钮失败：' + e.message);
  }
+
+ // ---------- Day 10: STYLE_CSS 提前注入到 document.head ----------
+ // 原版只在 openOrTogglePanel 触发时才注入。胶囊里 mount PSIS+/SEM 用的
+ // .cfs-psisp-* / .cfs-sem-* / .cfs-btn 等 class 全在这里定义 → 用户不点完整面板就没样式
+ // → 胶囊里 PSIS+/SEM 糊一坨没边框。提前注入解决
+ try {
+ if (!D.getElementById(STYLE_ID)) {
+ const _earlyStyle = D.createElement('style');
+ _earlyStyle.id = STYLE_ID;
+ _earlyStyle.textContent = STYLE_CSS;
+ D.head.appendChild(_earlyStyle);
+ console.log('[CFS v3.0] STYLE_CSS 已提前注入 document.head（让胶囊里的 PSIS+/SEM 拿到样式）');
+ }
+ } catch (eEarlyCss) { console.warn('[CFS v3.0] STYLE_CSS 提前注入失败', eEarlyCss); }
+
+ // ---------- Day 10: 暴露 PSIS panel 给浮动胶囊（fix Day 5 假替代）----------
+ // Day 5 polyfill 把 getButtonEvent/eventOnButton 改成 noop 后，PSIS 整个 panel
+ // 在 ST 原生扩展环境里**没有任何入口**（注释说"用浮动胶囊替代"但胶囊根本没接）。
+ // Day 10 修复：把 openOrTogglePanel 暴露在 CFS4.PSIS 上，让胶囊「🛡️ 打开 MVU 守护」按钮调
+ // 注：本 IIFE 用 `P = window.parent || window`（L67），不是 _GLOBAL
+ try {
+ P.CFS4 = P.CFS4 || {};
+ P.CFS4.PSIS = P.CFS4.PSIS || {};
+ P.CFS4.PSIS.openPanel = openOrTogglePanel;
+ P.CFS4.PSIS.closePanel = closePanel;
+ P.CFS4.PSIS._version = '3.1.7';
+ // 双挂 window，确保 ST 原生扩展环境（无 iframe parent）也能访问
+ if (typeof window !== 'undefined' && window !== P) {
+ window.CFS4 = window.CFS4 || {};
+ window.CFS4.PSIS = window.CFS4.PSIS || {};
+ window.CFS4.PSIS.openPanel = openOrTogglePanel;
+ window.CFS4.PSIS.closePanel = closePanel;
+ window.CFS4.PSIS._version = '3.1.7';
+ }
+ console.log('[CFS v3.0] CFS4.PSIS.openPanel 已暴露（供浮动胶囊调用）');
+ } catch (eExp) { console.warn('[CFS v3.0] 暴露 PSIS API 失败', eExp); }
 
  // ---------- spec v2: 监听 Coordinator + Fallback 事件，自动刷新面板状态区块 ----------
  try {

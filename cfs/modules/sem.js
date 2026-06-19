@@ -673,13 +673,16 @@ void _r;
   if (!panel || panel.__semDraggable) return;
   panel.__semDraggable = true;
 
-  var handle = panel.querySelector('.cfs-head') || panel.firstElementChild;
-  if (!handle) return;
-  handle.style.cursor = 'move';
+  // Day 10 fix：原版把 mousedown 绑在 .cfs-head 上 — render() 重写 innerHTML 后
+  // handle 元素被替换，listener 丢失但 __semDraggable=true 阻止重绑 → 点一下按钮就拖不动。
+  // 改用事件代理：mousedown 直接绑 panel（panel 元素持久不变），
+  // 进入回调时再 querySelector('.cfs-head') 拿最新 handle 判断 hit。
 
   var sx = 0, sy = 0, sl = 0, st = 0, dragging = false;
 
-  handle.addEventListener('mousedown', function (e) {
+  panel.addEventListener('mousedown', function (e) {
+   var head = panel.querySelector('.cfs-head');
+   if (!head || !head.contains(e.target)) return;
    var tn = e.target.tagName;
    if (tn === 'BUTTON' || tn === 'INPUT' || tn === 'A' || tn === 'SUMMARY' || tn === 'LABEL') return;
    dragging = true;
@@ -692,6 +695,10 @@ void _r;
    panel.style.bottom = 'auto';
    e.preventDefault();
   });
+
+  // cosmetic: 当前 head cursor 改成 move（render 后会被 STYLE_CSS 默认值盖回，没关系）
+  var initialHead = panel.querySelector('.cfs-head');
+  if (initialHead) initialHead.style.cursor = 'move';
 
   var winRef = D.defaultView || _GLOBAL;
   winRef.addEventListener('mousemove', function (e) {

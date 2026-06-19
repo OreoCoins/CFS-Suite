@@ -86,6 +86,19 @@ void _r;
  var _failureCount = 0;
  var _MAX_FAILURES_BEFORE_DEGRADE = 3;
 
+ // ===== CFS v5.0 Day 10: 自动观察 + Slow Promote / Fast Demote 内部 state =====
+ var _lastObserveAdjust = null; // 最近一次扫描结果（暴露给 capsule UI）
+ var _observeTotals = { promoted: 0, demoted: 0, lockedNow: 0, decayed: 0 }; // 累计统计
+ var _observeAdjustCallCount = 0; // _observeAndAdjust 调用计数（用于 periodic decay）
+ var LS_AP_ENABLED = 'cfs-suite/auto_promote_enabled';
+ var LS_AP_PROMOTE_AFTER = 'cfs-suite/auto_promote_after_rounds';
+ var LS_AP_THRASH_LOCK = 'cfs-suite/auto_promote_thrash_lock';
+ var LS_AP_VOLATILE_RE = 'cfs-suite/auto_promote_volatile_whitelist';
+ var LS_AP_DECAY_EVERY = 'cfs-suite/auto_promote_decay_every_n'; // regime shift 容错
+ // 默认 volatile 白名单：通用末段关键词（HP/SAN/状态/位置/余额/时间戳/计数器等高频字段）
+ // 跨卡通用，按字段名末段而非完整 path 匹配
+ var DEFAULT_VOLATILE_RE = '(HP$|SAN$|当前|状态$|位置$|余额|经验|欲望|淫乱|堕落|进度|count$|cnt$|time$|timestamp|round|tick)';
+
  // ===== TavernHelper helpers =====
  function _resolveTH() {
  if (typeof TavernHelper !== 'undefined') return TavernHelper;
@@ -258,6 +271,126 @@ void _r;
  }
 
  // ===== Step 4: 真接管 — 更新 dynamic entry content =====
+ // ===== CFS v5.0 Day 10: Slow Promote / Fast Demote 观察器 =====
+ // 设计原则（见 LOG/2026-06-19-cfs-auto-promote-impl-log.md）：
+ //   - promote 慢：连续 N 轮未变 + 抖动锁定未触发 + 不在白名单 → volatile → stable
+ //   - demote 快：本轮出现在 diff.present → stable → volatile（立即）
+ //   - 反复抖动锁定：promote_count >= THRASH_LOCK 后永久 volatile
+ //   - 跨卡通用：不看字段名 schema，靠运行时观察 + 通用末段正则兜底
+ function _observeAndAdjust(rawDiff) {
+ // 读 LS 配置
+ var enabled, promoteAfter, thrashLock, whitelistRe, decayEveryN;
+ try {
+ var rawEnabled = localStorage.getItem(LS_AP_ENABLED);
+ enabled = rawEnabled === null ? true : (rawEnabled !== '0');
+ promoteAfter = parseInt(localStorage.getItem(LS_AP_PROMOTE_AFTER) || '20', 10) || 20;
+ thrashLock = parseInt(localStorage.getItem(LS_AP_THRASH_LOCK) || '3', 10) || 3;
+ decayEveryN = parseInt(localStorage.getItem(LS_AP_DECAY_EVERY) || '100', 10) || 100;
+ var rawRe = localStorage.getItem(LS_AP_VOLATILE_RE) || DEFAULT_VOLATILE_RE;
+ whitelistRe = new RegExp(rawRe);
+ } catch (_e) {
+ return; // LS 不可用 / 正则解析失败 → 安静跳过
+ }
+ if (!enabled) return;
+ _observeAdjustCallCount++;
+
+ var reg = CFS4.PathRegistry.getAll();
+ var round = _injectionCount + 1; // 用 applyInjection 计数作 round
+ var presentSet = {};
+ if (rawDiff && Array.isArray(rawDiff.present)) {
+ for (var i = 0; i < rawDiff.present.length; i++) {
+ presentSet[rawDiff.present[i].path_id] = true;
+ }
+ }
+
+ var demoted = 0, promoted = 0, lockedNow = 0, scanned = 0;
+ var demotedSample = [], promotedSample = [];
+ var pids = Object.keys(reg);
+ for (var k = 0; k < pids.length; k++) {
+ var pid = pids[k];
+ var r = reg[pid];
+ if (!r) continue;
+ // 老数据兼容：缺四件套字段就地补 0（一次性 in-memory，flush 后落盘）
+ if (r.stable_rounds == null) r.stable_rounds = 0;
+ if (r.last_change_round == null) r.last_change_round = 0;
+ if (r.promote_count == null) r.promote_count = 0;
+ if (r.demote_count == null) r.demote_count = 0;
+ scanned++;
+
+ if (presentSet[pid]) {
+ // 本轮变了 → reset 稳定窗口
+ r.stable_rounds = 0;
+ r.last_change_round = round;
+ if (r.stability_class === 'stable') {
+ // FAST DEMOTE — 立即降级，cache 这一轮会断；正常代价
+ CFS4.PathRegistry.setStabilityClass(pid, 'volatile');
+ r.demote_count++;
+ demoted++;
+ if (demotedSample.length < 5) demotedSample.push(r.path);
+ try { CFS4.emit('cfs_stable_demoted', { path_id: pid, path: r.path, demote_count: r.demote_count, round: round }); } catch (_e) {}
+ }
+ } else {
+ // 本轮没变 → stable_rounds++
+ r.stable_rounds++;
+ if (r.stability_class === 'volatile') {
+ if (r.promote_count >= thrashLock) {
+ // 抖动锁定：永久 volatile
+ lockedNow++;
+ } else if (r.stable_rounds >= promoteAfter && !whitelistRe.test(r.path)) {
+ // SLOW PROMOTE
+ CFS4.PathRegistry.setStabilityClass(pid, 'stable');
+ r.promote_count++;
+ promoted++;
+ if (promotedSample.length < 5) promotedSample.push(r.path);
+ try { CFS4.emit('cfs_volatile_promoted', { path_id: pid, path: r.path, stable_rounds: r.stable_rounds, promote_count: r.promote_count, round: round }); } catch (_e) {}
+ }
+ }
+ }
+ }
+
+ // === Periodic Decay (regime shift 容错) ===
+ // 每 decayEveryN 次调用，对每个 path 的 promote_count / demote_count 各 -1（不低于 0）
+ // 防止「promote_count 单调增 → 锁定后永久 volatile」违背 regime shift
+ // 给锁定字段每 N 轮一个"机会窗口"
+ var decayed = 0;
+ if (decayEveryN > 0 && _observeAdjustCallCount % decayEveryN === 0) {
+ for (var dk = 0; dk < pids.length; dk++) {
+ var dr = reg[pids[dk]];
+ if (!dr) continue;
+ var changed = false;
+ if (dr.promote_count && dr.promote_count > 0) { dr.promote_count--; changed = true; }
+ if (dr.demote_count && dr.demote_count > 0) { dr.demote_count--; changed = true; }
+ if (changed) decayed++;
+ }
+ if (decayed > 0) {
+ _observeTotals.decayed += decayed;
+ L.info('_observeAndAdjust: decay 触发 (每 ' + decayEveryN + ' 轮) → ' + decayed + ' 个 path 的 promote/demote_count 各 -1');
+ try { CFS4.emit('cfs_auto_promote_decayed', { decayed: decayed, call_count: _observeAdjustCallCount }); } catch (_e) {}
+ }
+ }
+
+ // 落盘（setStabilityClass 内部每次都 persist，stable_rounds 等字段也需要持久化）
+ try { if (CFS4.PathRegistry.flush) CFS4.PathRegistry.flush(); } catch (_e) {}
+
+ _observeTotals.promoted += promoted;
+ _observeTotals.demoted += demoted;
+ _observeTotals.lockedNow = lockedNow;
+ _lastObserveAdjust = {
+ at: new Date().toISOString(),
+ round: round, scanned: scanned,
+ promoted: promoted, demoted: demoted, locked: lockedNow, decayed: decayed,
+ promoted_sample: promotedSample, demoted_sample: demotedSample,
+ totals: { promoted: _observeTotals.promoted, demoted: _observeTotals.demoted, decayed: _observeTotals.decayed },
+ config: { enabled: enabled, promoteAfter: promoteAfter, thrashLock: thrashLock, decayEveryN: decayEveryN }
+ };
+ if (promoted > 0 || demoted > 0) {
+ L.info('_observeAndAdjust round=' + round
+ + ' promoted=' + promoted + ' demoted=' + demoted
+ + ' locked=' + lockedNow + ' / scanned=' + scanned
+ + ' (累计 +' + _observeTotals.promoted + ' / -' + _observeTotals.demoted + ')');
+ }
+ }
+
  async function applyInjection(opts) {
  opts = opts || {};
  // === SessionGate 短路（spec v2）===
@@ -297,6 +430,14 @@ void _r;
  new_stat_data: sd,
  round: Date.now()
  });
+
+ // 3.5. CFS v5.0 Day 10: 观察本轮 diff，做 Slow Promote / Fast Demote / Periodic Decay
+ // 失败不阻塞主路径（cache 优化是 best-effort，注入正确性优先）
+ try {
+ _observeAndAdjust(inj.raw_diff);
+ } catch (eOa) {
+ L.warn('_observeAndAdjust 失败（不影响本轮注入）', eOa);
+ }
 
  // 4. 拼装 entry content
  var contentParts = [];
@@ -914,6 +1055,30 @@ void _r;
  // 公开 bootstrap API + worldbook 检测
  IS.bootstrapTakeover = bootstrapTakeover;
  IS.detectTakeoverState = _detectWorldbookTakeoverState;
+ // CFS v5.0 Day 10: 自动观察 API（给 capsule UI / 调试用）
+ IS.getAutoPromoteState = function () {
+ return {
+ last: _lastObserveAdjust,
+ totals: { promoted: _observeTotals.promoted, demoted: _observeTotals.demoted, decayed: _observeTotals.decayed },
+ call_count: _observeAdjustCallCount
+ };
+ };
+ IS.resetAutoPromoteCounters = function () {
+ // 手动重置全部 promote_count / demote_count / stable_rounds（紧急救场）
+ var reg = CFS4.PathRegistry.getAll();
+ var n = 0;
+ Object.keys(reg).forEach(function (pid) {
+ var r = reg[pid];
+ if (!r) return;
+ r.promote_count = 0;
+ r.demote_count = 0;
+ r.stable_rounds = 0;
+ n++;
+ });
+ try { if (CFS4.PathRegistry.flush) CFS4.PathRegistry.flush(); } catch (_e) {}
+ L.warn('resetAutoPromoteCounters: 重置 ' + n + ' 个 path 的 promote/demote/stable_rounds 计数');
+ return { reset: n };
+ };
 
  L.info('Real Takeover (方案 A) 已挂载 — 默认 mode=' + FS.getCurrentMode() + '，接管未启动');
 })();

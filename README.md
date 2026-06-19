@@ -3,7 +3,36 @@
 > **Cache-Friendly Scanner 套餐版** —— SillyTavern 原生扩展。
 > CFS v4.9.1 完整接管层 + fork 自 [MagVarUpdate](https://github.com/MagicalAstrogy/MagVarUpdate) 的 DeepSeek V4 适配版 MVU bundle，**一装即用**。
 >
-> 当前版本：`v5.0.0-day5`（接近正式发布，待 Day 6 测试矩阵收尾）
+> 当前版本：`v5.2.0` — 自动识别稳态字段 + MVU 守护面板入口修复
+
+---
+
+## 📋 5.2 改了什么（5.0.0-day9 → 5.2.0）
+
+### v5.2.0 — UI 修复 + 文案换人话（2026-06-20）
+
+- **修复 Day 5 假替代历史债** — 原 polyfill 注释「胶囊替代 MVU 守护面板」但实际上**胶囊里完全没接** PSIS / PSIS+ / SEM 任何 UI，只放 ✓ 已挂状态行。5.2 真把入口接上：
+  - 胶囊里新增 `MVU 守护面板（PSIS / PSIS+ / SEM）` section
+  - **PSIS+ 检测排序** / **SEM 稳态条目迁移** 两块直接挂在胶囊内，展开就能操作
+  - 加一个 `打开完整 MVU 守护面板` 按钮，弹 PSIS v3.1.7 原 panel（三大块 + MVU 接口管理）
+- **修拖动 bug** — PSIS panel 点一下按钮就拖不动了：SEM `makeDraggable` 绑 mousedown 在 `.cfs-head`，render 重写 innerHTML 后元素被替换但 `__semDraggable` 防重复绑导致永远不重绑 → 改用事件代理（mousedown 绑 panel 持久元素）
+- **修边框样式糊一坨** — PSIS+ / SEM 自己没 CSS 定义，class 全在 psis.js STYLE_CSS 里，原版只在 openOrTogglePanel 时注入。5.2 改成模块加载时立即注入 D.head，胶囊里 PSIS+/SEM 一进来就有完整样式
+- **删 ID 冲突** — PSIS 完整面板里 renderMvuConsole 末尾重复渲染 PSIS+/SEM，跟胶囊里那份 ID 重复（`cfs-psisp-root` / `cfs-sem-root` 全局唯一）导致 bindEvents 错绑；5.2 完整面板里**只保留**三大块 + MVU 接口管理，PSIS+/SEM 走胶囊次级菜单
+- **模块明细折叠 + 错误标红** — 16 项模块状态从平铺改成 details 折叠，全挂时显示 `✓ 全部 16 项已挂`（绿），任何模块未挂时自动展开 + 红底+左边框标红
+- **配置 UI 重排** — 自动识别稳态字段配置区改成每项独立块（深色背景 + 边框 + 标题在上输入在下 + 推荐值在右），不再挤一坨
+- **术语换人话** — promote / demote / volatile / stable / decay / thrash lock 全部替换成「认作稳态字段 / 撤销 / 变化字段 / 不变 / 重置 / 反复变化几次放弃尝试」
+
+### v5.1.0 — Auto Stable Promotion（未单独发布，并入 5.2）
+
+> 5.1 测试期发现 UI 缺陷必须先修，因此跳过 5.1 单独发布，自动识别稳态字段功能与 UI 修复一起在 5.2 落地。
+
+- **PathRegistry 加 4 字段** — `stable_rounds` / `last_change_round` / `promote_count` / `demote_count`，老 LS 数据缺字段自动补 0
+- **Real Takeover 加 `_observeAndAdjust` 观察器** — 在 `applyInjection` 末尾扫 `diff.present`：本轮没变的字段 stable_rounds++、本轮变化的字段立即降级（Fast Demote）。连续 20 轮没变 + 不在白名单 → 自动升 stable（Slow Promote）
+- **抖动锁定** — 反复 promote/demote 3 次后永久 volatile，防止跳来跳去打断 cache
+- **Periodic Decay** — 默认每 100 轮 promote_count/demote_count 各 -1（不低于 0），给"早期波动后稳定下来"的字段重试窗口，防 regime shift 锁死
+- **跨卡通用** — 不依赖 schema 字段命名，靠运行时观察 + 通用末段正则白名单兜底（HP/SAN/当前/状态/位置/余额/经验/欲望/淫乱/堕落/进度/count/cnt/time/timestamp/round/tick）
+- **胶囊配置面板** — 5 项 LS 配置项可调（开关 / promote 阈值 / 抖动锁定阈值 / decay 周期 / 黑名单正则）+ 上次扫描统计显示
+- **F12 API** — `window.CFS4.InjectionStrategy.getAutoPromoteState()` / `.resetAutoPromoteCounters()`
 
 ---
 
