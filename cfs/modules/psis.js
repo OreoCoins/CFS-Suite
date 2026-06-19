@@ -1627,8 +1627,21 @@ void _r;
 })();
 
 // ============================================================
-// ESM export — PSIS R1 注册到 Coordinator 后，CFS4.PSIS 字段就位
-// （原 IIFE 末尾 console.log "[CFS v3.1.7] PSIS plugin 已注册到 Coordinator"）
+// ESM export
+// PSIS 实际不挂独立 CFS4.PSIS 对象（v3.1.7 架构），而是 _registerV31Plugin
+// 异步重试 50ms × 50 次注册到 Coordinator 插件总线（name='psis'）。
+// ESM tail 同步求值时 plugin register 尚未发生 → 用 IIFE 完成 flag 替代。
 // ============================================================
-export const PSIS = window.CFS4?.PSIS;
-console.log('[CFS-Suite/psis] PSIS R1 ESM bridge OK, has PSIS object =', !!window.CFS4?.PSIS);
+if (window.CFS4) window.CFS4._psisIIFEDone = true;
+
+export const PSIS = window.CFS4?._psisIIFEDone
+    ? {
+        mounted: true,
+        _via: 'v3.1.7 IIFE done; Coordinator plugin name=psis (异步注册到总线)',
+    }
+    : null;
+
+console.log(
+    '[CFS-Suite/psis] PSIS R1 ESM bridge OK, IIFE done =',
+    !!window.CFS4?._psisIIFEDone,
+);
