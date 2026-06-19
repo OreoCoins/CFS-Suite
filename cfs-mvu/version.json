@@ -1,14 +1,21 @@
 {
-    "cfs_mvu_version": "5.0.0-day2",
-    "cfs_mvu_commit": "3025f5a8e6e2394c3923ff13ffd4040e140972f2",
-    "cfs_mvu_commit_short": "3025f5a",
+    "cfs_mvu_version": "5.0.0-day4b",
+    "cfs_mvu_commit": "ca352d4",
     "upstream_repo": "MagicalAstrogy/MagVarUpdate",
     "upstream_base_commit": "c1ae3a921bdab2e33b1afc745e5474b9b07fc070",
     "upstream_base_commit_short": "c1ae3a9",
     "upstream_base_date": "2026-04-25",
     "built_at": "2026-06-19",
-    "changes_summary": "DS4 adapt (#1) + schema degradation (#2) + parser fallback (#3)",
-    "bundle_size_bytes": 140999,
+    "changes_summary": "Day 2 (#1-3) DS4 + schema + parser; Day 4b (#4-6) cfs_hooks + exclusive_mode + _cfsEdition",
+    "bundle_size_bytes": 143466,
     "baseline_size_bytes": 137143,
-    "compat_note": "Day 2 阶段 bundle，未含 CFS hooks / exclusive mode（Day 4 落地）。CFS-Suite 当前骨架版尚未引用本 bundle。"
+    "features": [
+        "ds4_adapt",
+        "schema_degradation",
+        "parser_fallback",
+        "cfs_hooks",
+        "exclusive_mode",
+        "cfs_edition_marker"
+    ],
+    "compat_note": "Day 4b 含 Mvu._cfsHooks register API（触发点插桩 Day 5）+ Mvu._cfsEdition + lockWindowMvu。CFS-Suite 可启动期检测 Mvu._cfsEdition 决定深度集成。"
 }
