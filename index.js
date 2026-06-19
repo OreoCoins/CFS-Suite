@@ -30,10 +30,19 @@
 
 import { eventSource, event_types } from '../../../../script.js';
 
-// ⚠️ 关键 — 加载 CFS-MVU bundle（ESM 格式，副作用 init 挂 window.Mvu）
-// Day 1-5 漏了这个，导致 Mvu._cfsEdition 永远 undefined / exclusive_mode 没接管。
-// Bundle 内部 $(async () => {...}) 在 DOM ready 后跑，所以 import 时不立即 init，但 ESM 加载副作用注册了。
-import './cfs-mvu/bundle.js';
+// ⚠️ CFS-MVU bundle 用 dynamic import + catch — bundle 内部 import jsdelivr CDN
+// 拉 klona/pinia/compare-versions，加载失败不能阻塞 CFS-Suite 其他模块。
+// 上一笔静态 import './cfs-mvu/bundle.js' 让 bundle throw 时整个 ESM module graph 死掉。
+import('./cfs-mvu/bundle.js')
+    .then(() => console.log('[CFS-Suite] cfs-mvu/bundle.js 加载成功（MVU 接管即将生效）'))
+    .catch((e) => {
+        console.warn(
+            '[CFS-Suite] cfs-mvu/bundle.js 加载失败 — MVU 接管功能（_cfsEdition / exclusive_mode 等）失效',
+            '可能原因：jsdelivr CDN 不通 / 网络墙 / 证书错误',
+            'CFS-Suite 其他 16 项模块照常运行（v4.x 接管层 + 浮动胶囊 + UI 守护）',
+            e,
+        );
+    });
 
 // 完整加载链（importing kernel.js 会链式拉起其他依赖）
 import { Coordinator, SessionGate, NotificationCenter } from './cfs/core/kernel.js';
