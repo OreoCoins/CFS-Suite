@@ -34,11 +34,16 @@ import { Coordinator, SessionGate, NotificationCenter } from './cfs/core/kernel.
 // Real Takeover 不挂独立 CFS4.RealTakeover，而是 attach 到 CFS4.InjectionStrategy。
 // 用 import 拿 ESM export 的判据对象（基于 IIFE 完成 flag），不查 window.CFS4.RealTakeover。
 import { RealTakeover } from './cfs/core/real_takeover.js';
+// Day 5：v3.1.7 PSIS R1 主程序 + v4.9.1 SEM + v4.9.3 PSIS+
+// PSIS 必须在 PSIS+ 之前 import（PSIS+ 是补丁层）
+import { PSIS } from './cfs/modules/psis.js';
+import { SEM } from './cfs/modules/sem.js';
+import { PSISPlus } from './cfs/modules/psis_plus.js';
 // Day 4 附加 UI：右下角浮动胶囊 + 折叠面板（完整 panel.js 留 Day 6）
 import './cfs/ui/floating_capsule.js';
 
 const TAG = '[CFS-Suite]';
-const VERSION = '5.0.0-day4a';
+const VERSION = '5.0.0-day5';
 
 console.log(`${TAG} v${VERSION} loading...`);
 
@@ -59,6 +64,10 @@ eventSource.once(event_types.APP_READY, () => {
         FallbackStrategy: !!window.CFS4?.FallbackStrategy,
         HealthMonitor: !!window.CFS4?.HealthMonitor,
         RealTakeover: !!RealTakeover,
+        // Day 5 — modules 层
+        PSIS: !!PSIS,
+        SEM: !!SEM,
+        PSISPlus: !!PSISPlus,
         CFS4Version: window.CFS4?.version,
     };
     console.log(`${TAG} APP_READY confirmed`, status);

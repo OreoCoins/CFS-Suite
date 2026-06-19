@@ -303,6 +303,10 @@ function _moduleStatus() {
         '回退策略': !!c.FallbackStrategy,
         '健康监控': !!c.HealthMonitor,
         '真接管': !!c._realTakeoverIIFEDone,
+        // Day 5 modules
+        'PSIS R1 守护': !!c.PSIS,
+        'SEM 迁移器': !!c.SEM,
+        'PSIS+ 重排器': !!c.PSISPlus,
     };
 }
 
