@@ -17,7 +17,10 @@
 
 const TAG = '[CFS-Suite/ui]';
 const VERSION = '5.0.0-day5';
-const LS_POS_KEY = 'cfs-suite/ui/capsule_position';
+const LS_POS_KEY = 'cfs-suite/ui/capsule_position_v2';
+// 一次性清理 v1 旧 key：v1 默认右下，部分手机机型不可见；v2 改默认右上
+// 老用户升级后 v2 不存在 → 走新默认 CSS（右上角）→ 不再被 ST #send_form / iOS home indicator 遮住
+try { localStorage.removeItem('cfs-suite/ui/capsule_position'); } catch {}
 
 // 防重复挂载
 if (window.__cfsSuiteCapsuleMounted) {
@@ -34,7 +37,7 @@ function _mountCapsule() {
         #cfs-suite-capsule {
             position: fixed;
             right: max(16px, env(safe-area-inset-right, 16px));
-            bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+            top: calc(60px + env(safe-area-inset-top, 0px));
             z-index: 9999;
             background: linear-gradient(135deg, #2a7f4f 0%, #1a5c3a 100%);
             color: #fff;
@@ -172,10 +175,9 @@ function _mountCapsule() {
         }
         #cfs-suite-panel .log-clear-btn:hover { color: #fff; border-color: #888; }
 
-        /* 移动端避开 ST #send_form / 底部导航条；横竖屏都覆盖 */
+        /* 移动端胶囊本体放大方便触屏命中（位置已锚定右上，无需再调 top/right） */
         @media (max-width: 768px), (max-height: 500px) {
             #cfs-suite-capsule {
-                bottom: calc(140px + env(safe-area-inset-bottom, 0px));
                 padding: 10px 16px;
                 font-size: 13px;
             }
