@@ -34,6 +34,8 @@ import { Coordinator, SessionGate, NotificationCenter } from './cfs/core/kernel.
 // Real Takeover 不挂独立 CFS4.RealTakeover，而是 attach 到 CFS4.InjectionStrategy。
 // 用 import 拿 ESM export 的判据对象（基于 IIFE 完成 flag），不查 window.CFS4.RealTakeover。
 import { RealTakeover } from './cfs/core/real_takeover.js';
+// Day 4 附加 UI：右下角浮动胶囊 + 折叠面板（完整 panel.js 留 Day 6）
+import './cfs/ui/floating_capsule.js';
 
 const TAG = '[CFS-Suite]';
 const VERSION = '5.0.0-day4a';
