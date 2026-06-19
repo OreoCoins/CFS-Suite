@@ -428,13 +428,32 @@ function _renderMvuStatusLine() {
 }
 
 async function _installCfsMvu(panel) {
-    // Day 8: CFS-MVU 不再是 ST 扩展，是酒馆助手脚本。引导用户去酒馆助手装。
-    _pushLog(panel, '📋 CFS-MVU 安装方法（走酒馆助手脚本路径）：', 'info');
-    _pushLog(panel, '  ① 如之前在 ST 装过 CFS-MVU 扩展，先到「管理扩展程序」卸载', 'warn');
-    _pushLog(panel, '  ② 扩展面板 → 酒馆助手 → 全局脚本 → 「从 URL 导入」', 'info');
-    _pushLog(panel, `  ③ 粘贴 URL：${CFS_MVU_SCRIPT_JSON_URL}`, 'info');
-    _pushLog(panel, '  ④ 启用脚本 + F5 ST', 'info');
-    _pushLog(panel, '点「📋 复制 URL」按钮自动复制到剪贴板', 'info');
+    // Day 8-fix: 酒馆助手不支持 URL 导入，必须用 JSON 文件
+    _pushLog(panel, '📥 触发 CFS-MVU JSON 文件下载…', 'info');
+    try {
+        // CFS-Suite 仓库自带 JSON 文件作为附件
+        const localUrl = new URL('../../cfs-mvu/cfs-mvu-tavern-helper-script.json', import.meta.url).href;
+        const response = await fetch(localUrl);
+        if (!response.ok) throw new Error(`fetch 失败 ${response.status}`);
+        const blob = await response.blob();
+        const downloadUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = 'cfs-mvu-tavern-helper-script.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+        _pushLog(panel, '✅ 文件已下载到浏览器默认下载目录', 'success');
+        _pushLog(panel, '  ① 如之前在 ST 装过 CFS-MVU 扩展，先在「管理扩展程序」卸载', 'warn');
+        _pushLog(panel, '  ② 扩展面板 → 酒馆助手 → 全局脚本 → 「导入脚本」（JSON 文件）', 'info');
+        _pushLog(panel, '  ③ 选择刚下载的 cfs-mvu-tavern-helper-script.json', 'info');
+        _pushLog(panel, '  ④ 启用脚本 + 配置 URL/API 密钥 + F5 ST', 'info');
+    } catch (e) {
+        _pushLog(panel, '❌ 文件下载失败：' + (e?.message ?? e), 'error');
+        _pushLog(panel, '  ↳ 手动方式：从 GitHub 下载 cfs-mvu-tavern-helper-script.json', 'info');
+        _pushLog(panel, `  ↳ ${CFS_MVU_SCRIPT_JSON_URL}`, 'info');
+    }
 }
 
 async function _copyCfsMvuUrl(panel) {
@@ -592,8 +611,8 @@ function _renderPanel(panel) {
     html += '<button id="cfs-act-audit">🔍 重新校验 entry 位置</button>';
     html += '<button id="cfs-act-ls-clear" class="danger">🗑️ 清空 Path 缓存</button>';
     // Day 7-5/7-6
-    html += '<button id="cfs-act-install-mvu" class="primary">📋 CFS-MVU 安装指引</button>';
-    html += '<button id="cfs-act-copy-mvu-url">📋 复制脚本 URL</button>';
+    html += '<button id="cfs-act-install-mvu" class="primary">📥 下载 CFS-MVU JSON</button>';
+    html += '<button id="cfs-act-copy-mvu-url">📋 复制脚本 URL（备用）</button>';
     html += '<button id="cfs-act-scan-mvu" class="danger">🚫 扫描禁用其他 MVU</button>';
     html += '</div>';
 
