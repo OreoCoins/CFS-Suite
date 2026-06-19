@@ -29,6 +29,12 @@
  */
 
 import { eventSource, event_types } from '../../../../script.js';
+
+// ⚠️ 关键 — 加载 CFS-MVU bundle（ESM 格式，副作用 init 挂 window.Mvu）
+// Day 1-5 漏了这个，导致 Mvu._cfsEdition 永远 undefined / exclusive_mode 没接管。
+// Bundle 内部 $(async () => {...}) 在 DOM ready 后跑，所以 import 时不立即 init，但 ESM 加载副作用注册了。
+import './cfs-mvu/bundle.js';
+
 // 完整加载链（importing kernel.js 会链式拉起其他依赖）
 import { Coordinator, SessionGate, NotificationCenter } from './cfs/core/kernel.js';
 // Real Takeover 不挂独立 CFS4.RealTakeover，而是 attach 到 CFS4.InjectionStrategy。
@@ -43,7 +49,7 @@ import { PSISPlus } from './cfs/modules/psis_plus.js';
 import './cfs/ui/floating_capsule.js';
 
 const TAG = '[CFS-Suite]';
-const VERSION = '5.0.0-day5';
+const VERSION = '5.0.0-day6';
 
 console.log(`${TAG} v${VERSION} loading...`);
 
@@ -68,12 +74,15 @@ eventSource.once(event_types.APP_READY, () => {
         PSIS: !!PSIS,
         SEM: !!SEM,
         PSISPlus: !!PSISPlus,
+        // Day 6 fix — CFS-MVU bundle 是否真正 init（Day 1-5 漏了 import）
+        CFSMvuBundle: !!window.Mvu?._cfsEdition,
         CFS4Version: window.CFS4?.version,
+        MvuCfsEdition: window.Mvu?._cfsEdition?.version ?? '<未 init>',
     };
     console.log(`${TAG} APP_READY confirmed`, status);
 
     const allReady = Object.entries(status)
-        .filter(([k]) => k !== 'CFS4Version')
+        .filter(([k]) => k !== 'CFS4Version' && k !== 'MvuCfsEdition')
         .every(([, v]) => v);
 
     if (typeof toastr !== 'undefined') {
@@ -86,7 +95,7 @@ eventSource.once(event_types.APP_READY, () => {
             );
         } else {
             const missing = Object.entries(status)
-                .filter(([k, v]) => k !== 'CFS4Version' && !v)
+                .filter(([k, v]) => k !== 'CFS4Version' && k !== 'MvuCfsEdition' && !v)
                 .map(([k]) => k);
             toastr.error(
                 `CFS Suite v${VERSION} — 加载异常，缺：${missing.join(', ')}（看 F12）`,
