@@ -1,0 +1,13 @@
+{
+    "display_name": "CFS Suite",
+    "loading_order": 5,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "OreoCoins",
+    "version": "5.0.0-day1",
+    "homePage": "https://github.com/OreoCoins/CFS-Suite",
+    "auto_update": false,
+    "description": "CFS Suite: Cache-Friendly Scanner + bundled MVU fork for DeepSeek V4 (incompatible with other MVU forks)"
+}
