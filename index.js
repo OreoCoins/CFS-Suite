@@ -31,7 +31,9 @@
 import { eventSource, event_types } from '../../../../script.js';
 // 完整加载链（importing kernel.js 会链式拉起其他依赖）
 import { Coordinator, SessionGate, NotificationCenter } from './cfs/core/kernel.js';
-import './cfs/core/real_takeover.js';
+// Real Takeover 不挂独立 CFS4.RealTakeover，而是 attach 到 CFS4.InjectionStrategy。
+// 用 import 拿 ESM export 的判据对象（基于 IIFE 完成 flag），不查 window.CFS4.RealTakeover。
+import { RealTakeover } from './cfs/core/real_takeover.js';
 
 const TAG = '[CFS-Suite]';
 const VERSION = '5.0.0-day4a';
@@ -54,7 +56,7 @@ eventSource.once(event_types.APP_READY, () => {
         InjectionStrategy: !!window.CFS4?.InjectionStrategy,
         FallbackStrategy: !!window.CFS4?.FallbackStrategy,
         HealthMonitor: !!window.CFS4?.HealthMonitor,
-        RealTakeover: !!window.CFS4?.RealTakeover,
+        RealTakeover: !!RealTakeover,
         CFS4Version: window.CFS4?.version,
     };
     console.log(`${TAG} APP_READY confirmed`, status);
