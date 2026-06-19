@@ -304,7 +304,8 @@ function _moduleStatus() {
         '健康监控': !!c.HealthMonitor,
         '真接管': !!c._realTakeoverIIFEDone,
         // Day 5 modules
-        'PSIS R1 守护': !!c.PSIS,
+        // PSIS 是 Coordinator plugin (异步注册)，用 IIFE 完成 flag 判定挂载
+        'PSIS R1 守护': !!c._psisIIFEDone,
         'SEM 迁移器': !!c.SEM,
         'PSIS+ 重排器': !!c.PSISPlus,
     };
