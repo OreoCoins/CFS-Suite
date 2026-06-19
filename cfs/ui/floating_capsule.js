@@ -390,11 +390,23 @@ function _escapeHtml(s) {
 const CFS_MVU_GITHUB_URL = 'https://github.com/OreoCoins/CFS-MVU';
 const _cfsMvuStatus = { installed: null, version: null, lastCheckedAt: 0 };
 
+function _getCsrfHeaders() {
+    // ST 真 getRequestHeaders 带 CSRF token；window.getRequestHeaders 由 polyfill 或 ST 提供
+    try {
+        const ctx = window.SillyTavern?.getContext?.();
+        if (typeof ctx?.getRequestHeaders === 'function') return ctx.getRequestHeaders();
+    } catch {}
+    try {
+        if (typeof window.getRequestHeaders === 'function') return window.getRequestHeaders();
+    } catch {}
+    return { 'Content-Type': 'application/json' };
+}
+
 async function _detectCfsMvuInstalled() {
     try {
         const response = await fetch('/api/extensions/discover', {
             method: 'GET',
-            headers: { 'Content-Type': 'application/json' },
+            headers: _getCsrfHeaders(),
             cache: 'no-store',
         });
         if (!response.ok) return false;
@@ -433,11 +445,15 @@ async function _installCfsMvu(panel) {
     try {
         const response = await fetch('/api/extensions/install', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: _getCsrfHeaders(),
             body: JSON.stringify({ url: CFS_MVU_GITHUB_URL, global: true }),
         });
         const text = await response.text();
-        if (!response.ok) throw new Error(text || `${response.status}`);
+        if (!response.ok) {
+            // 摘 HTML error 标签简化显示
+            const cleaned = text.replace(/<[^>]+>/g, '').trim().slice(0, 200);
+            throw new Error(cleaned || `${response.status} ${response.statusText}`);
+        }
         _pushLog(panel, '✅ CFS-MVU 安装成功，3 秒后自动刷新 ST 加载新扩展', 'success');
         setTimeout(() => location.reload(), 3000);
     } catch (e) {
@@ -457,56 +473,87 @@ async function _copyCfsMvuUrl(panel) {
 
 // ===== Day 7-6: 扫描禁用其他 MVU 脚本（酒馆助手 API） =====
 
+// 递归把 ScriptTree (Script | ScriptFolder) 平展成 Script 数组
+function _flattenScriptTrees(trees) {
+    const out = [];
+    for (const node of trees ?? []) {
+        if (node?.type === 'script') out.push(node);
+        else if (node?.type === 'folder' && Array.isArray(node.scripts)) {
+            out.push(..._flattenScriptTrees(node.scripts));
+        }
+    }
+    return out;
+}
+
 async function _scanAndDisableOtherMvu(panel) {
-    const TH = window.TavernHelper;
-    if (!TH?.getScripts) {
-        _pushLog(panel, '❌ 酒馆助手未装或 TavernHelper.getScripts 不可用', 'error');
+    // 酒馆助手真实 API：getScriptTrees + updateScriptTreesWith（不是 getScripts）
+    const getTrees = window.getScriptTrees;
+    const updateTreesWith = window.updateScriptTreesWith;
+    if (typeof getTrees !== 'function' || typeof updateTreesWith !== 'function') {
+        _pushLog(panel, '❌ 酒馆助手 API 不可用（缺 getScriptTrees / updateScriptTreesWith）', 'error');
+        _pushLog(panel, '  ↳ 请确认已装酒馆助手（JS-Slash-Runner）', 'info');
         return;
     }
-    _pushLog(panel, '🔍 扫描酒馆助手脚本库…', 'info');
-    try {
-        const scripts = await TH.getScripts();
-        if (!Array.isArray(scripts)) {
-            _pushLog(panel, '❌ TavernHelper.getScripts 返非数组', 'error');
-            return;
-        }
-        // 找名字含 MVU/MagVar/变量框架 但不含 CFS-MVU 自己的标识
-        const isMvuScript = (s) => {
-            const name = (s.name || '').toLowerCase();
-            const isMvu = /mvu|magvar|变量框架|variable.?framework/i.test(name);
-            const isCfsMvu = /cfs[-_ ]?mvu|cfs[-_ ]?suite/i.test(name);
-            return isMvu && !isCfsMvu;
-        };
-        const targets = scripts.filter(s => isMvuScript(s) && s.enabled !== false);
-        if (targets.length === 0) {
-            _pushLog(panel, '✅ 未发现其他启用的 MVU 脚本，无需禁用', 'success');
-            return;
-        }
-        const names = targets.map(s => `「${s.name}」`).join(' / ');
-        if (!confirm(`找到 ${targets.length} 个启用的非 CFS-MVU 脚本：\n${names}\n\n确定禁用？（仅运行时禁用，不删脚本）`)) {
-            _pushLog(panel, '⏸ 用户取消禁用操作', 'warn');
-            return;
-        }
-        let disabled = 0;
-        for (const s of targets) {
-            try {
-                if (typeof TH.updateScript === 'function') {
-                    await TH.updateScript({ id: s.id, enabled: false });
-                } else if (typeof TH.disableScript === 'function') {
-                    await TH.disableScript(s.id);
-                } else {
-                    throw new Error('TavernHelper 没 updateScript/disableScript API');
-                }
-                disabled++;
-                _pushLog(panel, `  ↳ 已禁用：${s.name}`, 'success');
-            } catch (e) {
-                _pushLog(panel, `  ↳ 禁用失败 ${s.name}: ${e?.message ?? e}`, 'error');
+    _pushLog(panel, '🔍 扫描酒馆助手脚本（global + character + preset）…', 'info');
+
+    const isMvuScript = (s) => {
+        const name = (s.name || '').toLowerCase();
+        const isMvu = /mvu|magvar|变量框架|variable.?framework/i.test(name);
+        const isCfsMvu = /cfs[-_ ]?mvu|cfs[-_ ]?suite/i.test(name);
+        return isMvu && !isCfsMvu;
+    };
+
+    const types = ['global', 'character', 'preset'];
+    const allTargets = [];
+    for (const t of types) {
+        try {
+            const trees = await getTrees({ type: t });
+            const scripts = _flattenScriptTrees(trees);
+            const targets = scripts.filter(s => isMvuScript(s) && s.enabled !== false);
+            if (targets.length > 0) {
+                allTargets.push({ type: t, targets });
+                _pushLog(panel, `  ↳ ${t}: 找到 ${targets.length} 个`, 'info');
             }
+        } catch (e) {
+            _pushLog(panel, `  ↳ ${t} 扫描失败: ${e?.message ?? e}`, 'warn');
         }
-        _pushLog(panel, `🚫 完成：禁用 ${disabled}/${targets.length} 个脚本（F5 后生效）`, 'success');
-    } catch (e) {
-        _pushLog(panel, '❌ 扫描失败：' + (e?.message ?? e), 'error');
     }
+
+    if (allTargets.length === 0) {
+        _pushLog(panel, '✅ 未发现其他启用的 MVU 脚本，无需禁用', 'success');
+        return;
+    }
+
+    const allNames = allTargets.flatMap(g => g.targets.map(s => `[${g.type}] 「${s.name}」`)).join('\n');
+    const total = allTargets.reduce((sum, g) => sum + g.targets.length, 0);
+    if (!confirm(`找到 ${total} 个启用的非 CFS-MVU 脚本：\n${allNames}\n\n确定禁用？（仅运行时禁用，不删脚本）`)) {
+        _pushLog(panel, '⏸ 用户取消', 'warn');
+        return;
+    }
+
+    let disabled = 0;
+    for (const { type, targets } of allTargets) {
+        const ids = new Set(targets.map(s => s.id));
+        try {
+            await updateTreesWith((trees) => {
+                const updater = (nodes) => nodes.map(n => {
+                    if (n.type === 'script' && ids.has(n.id)) {
+                        return { ...n, enabled: false };
+                    }
+                    if (n.type === 'folder' && Array.isArray(n.scripts)) {
+                        return { ...n, scripts: updater(n.scripts) };
+                    }
+                    return n;
+                });
+                return updater(trees);
+            }, { type });
+            disabled += targets.length;
+            for (const s of targets) _pushLog(panel, `  ↳ ✓ [${type}] ${s.name}`, 'success');
+        } catch (e) {
+            _pushLog(panel, `  ↳ ✗ ${type} 写回失败: ${e?.message ?? e}`, 'error');
+        }
+    }
+    _pushLog(panel, `🚫 完成：禁用 ${disabled}/${total} 个 MVU 脚本（F5 生效）`, 'success');
 }
 
 function _renderPanel(panel) {
