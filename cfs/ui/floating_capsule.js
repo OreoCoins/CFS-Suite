@@ -140,7 +140,7 @@ function _mountCapsule() {
     // ===== DOM =====
     const capsule = document.createElement('div');
     capsule.id = 'cfs-suite-capsule';
-    capsule.textContent = `🛡️ CFS Suite · 加载中`;
+    capsule.textContent = `🥵 CFS缓存优化器 · 加载中`;
     document.body.appendChild(capsule);
 
     const panel = document.createElement('div');
@@ -270,7 +270,7 @@ function _moduleStatus() {
 }
 
 function _modeLabel(mode) {
-    if (mode === 'v4_full') return { text: '🛡️ 接管已启用', cls: 'ok' };
+    if (mode === 'v4_full') return { text: '🥵 接管已启用', cls: 'ok' };
     if (mode === 'mvu_fallback') return { text: '⏸ 接管已关闭（用原版 MVU）', cls: 'warn' };
     if (mode === 'v4_degraded') return { text: '⚠️ 自动降级中', cls: 'err' };
     return { text: mode || '未知', cls: 'warn' };
@@ -297,16 +297,16 @@ function _updateCapsuleStatus(capsule) {
         else capsule.classList.add('status-warn');
     }
 
-    const phase = window.CFS4?.Coordinator?.getPhase?.() ?? '?';
+    const phase = window.CFS4?.Coordinator?.getState?.()?.phase ?? '?';
     const mode = window.CFS4?.FallbackStrategy?.getCurrentMode?.() ?? '?';
     const modeLbl = _modeLabel(mode);
 
     if (mounted === total && (phase === 'DONE' || phase === 'READY_FULL')) {
-        capsule.textContent = `🛡️ CFS Suite · ${modeLbl.text}`;
+        capsule.textContent = `🥵 CFS缓存优化器 · ${modeLbl.text}`;
     } else if (mounted === total) {
-        capsule.textContent = `🛡️ CFS Suite · ${_phaseLabel(phase).text}`;
+        capsule.textContent = `🥵 CFS缓存优化器 · ${_phaseLabel(phase).text}`;
     } else {
-        capsule.textContent = `🛡️ CFS Suite · 加载中 ${mounted}/${total}`;
+        capsule.textContent = `🥵 CFS缓存优化器 · 加载中 ${mounted}/${total}`;
     }
 }
 
@@ -327,7 +327,7 @@ function _renderPanel(panel) {
     const total = Object.keys(status).length;
     const mounted = Object.values(status).filter(Boolean).length;
 
-    let html = `<h3>🛡️ CFS Suite · ${VERSION}</h3>`;
+    let html = `<h3>🥵 CFS缓存优化器 · ${VERSION}</h3>`;
 
     // 总览
     html += '<div class="section">';
@@ -358,7 +358,7 @@ function _renderPanel(panel) {
 
     // 操作按钮 — 用人话
     html += '<div class="actions">';
-    html += '<button id="cfs-act-enable" class="primary">🛡️ 启用接管</button>';
+    html += '<button id="cfs-act-enable" class="primary">🥵 启用接管</button>';
     html += '<button id="cfs-act-disable">⏸ 关闭接管</button>';
     html += '<button id="cfs-act-audit">🔍 重新校验 entry 位置</button>';
     html += '<button id="cfs-act-ls-clear" class="danger">🗑️ 清空 Path 缓存</button>';
@@ -366,7 +366,7 @@ function _renderPanel(panel) {
     html += '</div>';
 
     html += '<div class="hint">';
-    html += '• <b>启用接管</b>：CFS Suite 接手 prompt 注入，省 token + 防止 MVU 输出污染<br>';
+    html += '• <b>启用接管</b>：CFS缓存优化器 接手 prompt 注入，省 token + 防止 MVU 输出污染<br>';
     html += '• <b>关闭接管</b>：临时回到原版 MVU 渲染（用于对比效果）<br>';
     html += '• <b>重新校验</b>：扫世界书 entry 位置 + 自动修复漂移<br>';
     html += '• <b>清空 Path 缓存</b>：删 localStorage 里的 path 记录（救命）<br>';
