@@ -317,7 +317,7 @@ function _setToast(panel, msg) {
 
 function _renderPanel(panel) {
     const status = _moduleStatus();
-    const phase = window.CFS4?.Coordinator?.getPhase?.() ?? 'unknown';
+    const phase = window.CFS4?.Coordinator?.getState?.()?.phase ?? 'unknown';
     const mode = window.CFS4?.FallbackStrategy?.getCurrentMode?.() ?? 'unknown';
     const phaseLbl = _phaseLabel(phase);
     const modeLbl = _modeLabel(mode);
