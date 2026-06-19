@@ -128,12 +128,49 @@ function _mountCapsule() {
             margin-top: 8px;
             line-height: 1.4;
         }
-        #cfs-suite-panel .toast-row {
-            color: #6ed29c;
-            font-size: 11px;
-            margin-top: 6px;
-            min-height: 14px;
+        #cfs-suite-panel .log-box {
+            max-height: 160px;
+            overflow-y: auto;
+            background: #0e0e0f;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 6px 8px;
+            margin-top: 10px;
+            font-family: 'Consolas', 'Microsoft YaHei Mono', monospace;
+            font-size: 10px;
+            line-height: 1.5;
         }
+        #cfs-suite-panel .log-box-empty {
+            color: #555;
+            font-style: italic;
+            padding: 4px 0;
+        }
+        #cfs-suite-panel .log-line { padding: 1px 0; word-break: break-all; }
+        #cfs-suite-panel .log-line.kind-info    { color: #aaa; }
+        #cfs-suite-panel .log-line.kind-success { color: #6ed29c; }
+        #cfs-suite-panel .log-line.kind-warn    { color: #f0c060; }
+        #cfs-suite-panel .log-line.kind-error   { color: #e07060; }
+        #cfs-suite-panel .log-time { color: #555; margin-right: 4px; }
+        #cfs-suite-panel .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 12px;
+            margin-bottom: 0;
+        }
+        #cfs-suite-panel .log-header .section-title { margin: 0; }
+        #cfs-suite-panel .log-clear-btn {
+            background: transparent;
+            color: #888;
+            border: 1px solid #444;
+            padding: 1px 7px;
+            border-radius: 3px;
+            font-size: 10px;
+            cursor: pointer;
+            width: auto;
+            margin: 0;
+        }
+        #cfs-suite-panel .log-clear-btn:hover { color: #fff; border-color: #888; }
     `;
     document.head.appendChild(style);
 
@@ -310,9 +347,38 @@ function _updateCapsuleStatus(capsule) {
     }
 }
 
-function _setToast(panel, msg) {
-    const el = panel.querySelector('.toast-row');
-    if (el) el.textContent = msg;
+// ===== 持久化日志（panel re-render 不丢历史，最多保留 50 条）=====
+const _logHistory = [];
+const LOG_MAX = 50;
+
+function _pushLog(panel, msg, kind = 'info') {
+    const now = new Date();
+    const time = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+    _logHistory.unshift({ time, msg, kind });
+    while (_logHistory.length > LOG_MAX) _logHistory.pop();
+    _renderLogBox(panel);
+}
+
+function _renderLogBox(panel) {
+    const box = panel.querySelector('.log-box');
+    if (!box) return;
+    if (_logHistory.length === 0) {
+        box.innerHTML = '<div class="log-box-empty">（暂无操作记录。按上方按钮后此处会留下持久化提示）</div>';
+        return;
+    }
+    box.innerHTML = _logHistory
+        .map(
+            (l) =>
+                `<div class="log-line kind-${l.kind}"><span class="log-time">${l.time}</span>${_escapeHtml(l.msg)}</div>`,
+        )
+        .join('');
+}
+
+function _escapeHtml(s) {
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
 
 function _renderPanel(panel) {
@@ -362,8 +428,14 @@ function _renderPanel(panel) {
     html += '<button id="cfs-act-disable">⏸ 关闭接管</button>';
     html += '<button id="cfs-act-audit">🔍 重新校验 entry 位置</button>';
     html += '<button id="cfs-act-ls-clear" class="danger">🗑️ 清空 Path 缓存</button>';
-    html += '<div class="toast-row"></div>';
     html += '</div>';
+
+    // 持久化日志框（按钮下方，记 CFS 操作提示历史，不消失）
+    html += '<div class="log-header">';
+    html += '<span class="section-title">操作记录</span>';
+    html += '<button class="log-clear-btn" id="cfs-log-clear">清空</button>';
+    html += '</div>';
+    html += '<div class="log-box"></div>';
 
     html += '<div class="hint">';
     html += '• <b>启用接管</b>：CFS缓存优化器 接手 prompt 注入，省 token + 防止 MVU 输出污染<br>';
@@ -376,18 +448,23 @@ function _renderPanel(panel) {
 
     panel.innerHTML = html;
 
+    // 渲染日志框（panel 重渲染后历史不丢）
+    _renderLogBox(panel);
+
     // 绑事件
     panel.querySelector('#cfs-act-enable')?.addEventListener('click', () => {
         const fs = window.CFS4?.FallbackStrategy;
         if (!fs?.recoverToV4) {
-            _setToast(panel, '❌ FallbackStrategy.recoverToV4 不可用');
+            _pushLog(panel, 'FallbackStrategy.recoverToV4 不可用', 'error');
             return;
         }
         try {
             const r = fs.recoverToV4({ force: true, reason: 'manual_from_capsule' });
-            _setToast(panel, '✅ 接管已启用：' + (r?.prevMode ? `${r.prevMode} → v4_full` : 'v4_full'));
+            const prev = r?.prevMode;
+            const cur = r?.currentMode || 'v4_full';
+            _pushLog(panel, `🥵 启用接管：${prev ? prev + ' → ' + cur : '已在 ' + cur}`, 'success');
         } catch (e) {
-            _setToast(panel, '❌ 启用失败：' + (e?.message || e));
+            _pushLog(panel, '启用失败：' + (e?.message || e), 'error');
             console.error(e);
         }
         setTimeout(() => _renderPanel(panel), 400);
@@ -396,14 +473,16 @@ function _renderPanel(panel) {
     panel.querySelector('#cfs-act-disable')?.addEventListener('click', () => {
         const fs = window.CFS4?.FallbackStrategy;
         if (!fs?.degradeToMvu) {
-            _setToast(panel, '❌ FallbackStrategy.degradeToMvu 不可用');
+            _pushLog(panel, 'FallbackStrategy.degradeToMvu 不可用', 'error');
             return;
         }
         try {
             const r = fs.degradeToMvu({ reason: 'manual_from_capsule', auto: false });
-            _setToast(panel, '⏸ 接管已关闭：' + (r?.prevMode ? `${r.prevMode} → mvu_fallback` : 'mvu_fallback'));
+            const prev = r?.prevMode;
+            const cur = r?.currentMode || 'mvu_fallback';
+            _pushLog(panel, `⏸ 关闭接管：${prev ? prev + ' → ' + cur : '已在 ' + cur}`, 'warn');
         } catch (e) {
-            _setToast(panel, '❌ 关闭失败：' + (e?.message || e));
+            _pushLog(panel, '关闭失败：' + (e?.message || e), 'error');
             console.error(e);
         }
         setTimeout(() => _renderPanel(panel), 400);
@@ -412,15 +491,33 @@ function _renderPanel(panel) {
     panel.querySelector('#cfs-act-audit')?.addEventListener('click', async () => {
         const co = window.CFS4?.Coordinator;
         if (!co?.auditEntries) {
-            _setToast(panel, '❌ Coordinator.auditEntries 不可用');
+            _pushLog(panel, 'Coordinator.auditEntries 不可用', 'error');
             return;
         }
-        _setToast(panel, '🔍 校验中…');
+        _pushLog(panel, '🔍 开始校验 entry 位置…', 'info');
         try {
             const r = await co.auditEntries({ force: true });
-            _setToast(panel, `✅ 校验完成：扫描 ${r?.scanned ?? '?'} 条，修正 ${r?.fixed ?? 0} 条`);
+            // 返回结构：{fixed, uids?} | {skipped, reason?} | {error, attempted?}
+            if (r?.skipped) {
+                _pushLog(panel, `⏸ 跳过：${r.reason || 'debounce 未到时间'}`, 'warn');
+            } else if (r?.error) {
+                _pushLog(panel, `校验失败：${r.error}${r.attempted ? ' (尝试修正 ' + r.attempted + ' 条)' : ''}`, 'error');
+            } else {
+                const fixed = r?.fixed ?? 0;
+                const uidStr = r?.uids?.length ? ` (uid=${r.uids.join(',')})` : '';
+                if (fixed > 0) {
+                    _pushLog(panel, `✅ 校验完成：修正 ${fixed} 条${uidStr}`, 'success');
+                } else {
+                    _pushLog(panel, `✅ 校验完成：位置正确，无需修正`, 'success');
+                }
+            }
+            // 同步从 audit state 拿 run_count 顺便展示
+            const ast = co.getAuditState?.();
+            if (ast) {
+                _pushLog(panel, `  ↳ 累计 audit 跑过 ${ast.run_count} 次`, 'info');
+            }
         } catch (e) {
-            _setToast(panel, '❌ 校验失败：' + (e?.message || e));
+            _pushLog(panel, '校验抛错：' + (e?.message || e), 'error');
             console.error(e);
         }
         setTimeout(() => _renderPanel(panel), 400);
@@ -436,7 +533,14 @@ function _renderPanel(panel) {
                 removed.push(k);
             }
         }
-        _setToast(panel, `🗑️ 已删 ${removed.length} 项，下次 F5 生效`);
-        alert(`已删 ${removed.length} 项：\n${removed.join('\n')}\n下次 F5 后 Path 缓存从 0 重建。`);
+        _pushLog(panel, `🗑️ 已删 ${removed.length} 项 localStorage 项（下次 F5 生效）`, 'warn');
+        if (removed.length > 0) {
+            _pushLog(panel, `  ↳ ${removed.join(' / ')}`, 'info');
+        }
+    });
+
+    panel.querySelector('#cfs-log-clear')?.addEventListener('click', () => {
+        _logHistory.length = 0;
+        _renderLogBox(panel);
     });
 }
