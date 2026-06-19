@@ -16,7 +16,7 @@
  */
 
 const TAG = '[CFS-Suite/ui]';
-const VERSION = '5.0.0-day4a';
+const VERSION = '5.0.0-day5';
 const LS_POS_KEY = 'cfs-suite/ui/capsule_position';
 
 // 防重复挂载

@@ -113,6 +113,27 @@ _polyfillGlobal('insertOrAssignVariables', (vars, opts) => {
     }
 });
 
+// ===== 酒馆助手「按钮注入」API noop (Day 5) =====
+// 原 CFS v3.1.7 在 L1223 用 getButtonEvent('xxx') 注册「🛡️ MVU 守护」按钮到聊天输入框旁。
+// ST 原生扩展环境没这些函数；CFS-Suite 用浮动胶囊替代。给 noop 让 PSIS 主 IIFE 别中断。
+
+_polyfillGlobal('getButtonEvent', (button_name) => {
+    // 返回稳定字符串（CFS 用作 event_id）
+    return `cfs-suite-btn::${button_name || 'unnamed'}`;
+});
+
+_polyfillGlobal('eventOnButton', (button_name, handler) => {
+    // noop — 按钮在原生扩展里不存在，handler 永远不触发
+    void button_name; void handler;
+});
+
+_polyfillGlobal('appendInexistentScriptButtons', (buttons) => {
+    // noop — 同上，不创建任何 ST UI 按钮
+    void buttons;
+});
+
+_polyfillGlobal('getScriptName', () => 'cfs-suite-native');
+
 // ===== Worldbook polyfill (Day 5) =====
 // 这些在 path_registry / TavernHelper.* lorebook 实际用到时再写，
 // 当前保持未定义让真正用到的模块在调用时报清晰错误，而不是静默吞。
