@@ -386,8 +386,9 @@ function _escapeHtml(s) {
         .replace(/>/g, '&gt;');
 }
 
-// ===== Day 7-5: CFS-MVU 安装状态 + 一键引导 =====
+// ===== Day 8: CFS-MVU 走酒馆助手脚本路径（不再做 ST 原生扩展） =====
 const CFS_MVU_GITHUB_URL = 'https://github.com/OreoCoins/CFS-MVU';
+const CFS_MVU_SCRIPT_JSON_URL = 'https://raw.githubusercontent.com/OreoCoins/CFS-MVU/main/artifact/cfs-mvu-tavern-helper-script.json';
 const _cfsMvuStatus = { installed: null, version: null, lastCheckedAt: 0 };
 
 function _getCsrfHeaders() {
@@ -402,25 +403,14 @@ function _getCsrfHeaders() {
     return { 'Content-Type': 'application/json' };
 }
 
-async function _detectCfsMvuInstalled() {
-    try {
-        const response = await fetch('/api/extensions/discover', {
-            method: 'GET',
-            headers: _getCsrfHeaders(),
-            cache: 'no-store',
-        });
-        if (!response.ok) return false;
-        const list = await response.json();
-        if (!Array.isArray(list)) return false;
-        return list.some(item => item?.name?.includes('CFS-MVU') || item?.name?.endsWith('/CFS-MVU'));
-    } catch (e) {
-        console.warn('[CFS-Suite/ui] detect CFS-MVU failed', e);
-        return false;
-    }
+function _detectCfsMvuInstalled() {
+    // Day 8: 改用真实标识 — window.Mvu._cfsEdition 存在 = CFS-MVU 套餐版已就位
+    // 之前用 /api/extensions/discover 是错的（CFS-MVU 不再做 ST 扩展）
+    return !!window.Mvu?._cfsEdition;
 }
 
-async function _refreshCfsMvuStatus(panel) {
-    _cfsMvuStatus.installed = await _detectCfsMvuInstalled();
+function _refreshCfsMvuStatus(panel) {
+    _cfsMvuStatus.installed = _detectCfsMvuInstalled();
     _cfsMvuStatus.version = window.Mvu?._cfsEdition?.version ?? null;
     _cfsMvuStatus.lastCheckedAt = Date.now();
     const el = panel?.querySelector?.('.mvu-status-line');
@@ -428,46 +418,33 @@ async function _refreshCfsMvuStatus(panel) {
 }
 
 function _renderMvuStatusLine() {
-    if (_cfsMvuStatus.installed === null) {
-        return '<span class="v info">检测中…</span>';
+    if (_cfsMvuStatus.installed && _cfsMvuStatus.version) {
+        return `<span class="v ok">✓ CFS-MVU 已生效 (v${_cfsMvuStatus.version})</span>`;
     }
-    if (_cfsMvuStatus.installed) {
-        const v = _cfsMvuStatus.version
-            ? `<span class="v ok">✓ 已装 (v${_cfsMvuStatus.version})</span>`
-            : `<span class="v warn">✓ 装了但 bundle 未 init</span>`;
-        return v;
+    if (typeof window.Mvu?.getMvuData === 'function') {
+        return '<span class="v warn">⚠️ Mvu 存在但非 CFS-MVU 套餐版（建议换装）</span>';
     }
-    return '<span class="v err">✗ 未装</span>';
+    return '<span class="v err">✗ 未装 CFS-MVU（点下方按钮看引导）</span>';
 }
 
 async function _installCfsMvu(panel) {
-    _pushLog(panel, '📦 安装 CFS-MVU 中…', 'info');
-    try {
-        const response = await fetch('/api/extensions/install', {
-            method: 'POST',
-            headers: _getCsrfHeaders(),
-            body: JSON.stringify({ url: CFS_MVU_GITHUB_URL, global: true }),
-        });
-        const text = await response.text();
-        if (!response.ok) {
-            // 摘 HTML error 标签简化显示
-            const cleaned = text.replace(/<[^>]+>/g, '').trim().slice(0, 200);
-            throw new Error(cleaned || `${response.status} ${response.statusText}`);
-        }
-        _pushLog(panel, '✅ CFS-MVU 安装成功，3 秒后自动刷新 ST 加载新扩展', 'success');
-        setTimeout(() => location.reload(), 3000);
-    } catch (e) {
-        _pushLog(panel, '❌ 安装失败：' + (e?.message ?? e), 'error');
-        _pushLog(panel, `  ↳ 可手动装：在 ST 扩展安装界面粘贴 ${CFS_MVU_GITHUB_URL}`, 'info');
-    }
+    // Day 8: CFS-MVU 不再是 ST 扩展，是酒馆助手脚本。引导用户去酒馆助手装。
+    _pushLog(panel, '📋 CFS-MVU 安装方法（走酒馆助手脚本路径）：', 'info');
+    _pushLog(panel, '  ① 如之前在 ST 装过 CFS-MVU 扩展，先到「管理扩展程序」卸载', 'warn');
+    _pushLog(panel, '  ② 扩展面板 → 酒馆助手 → 全局脚本 → 「从 URL 导入」', 'info');
+    _pushLog(panel, `  ③ 粘贴 URL：${CFS_MVU_SCRIPT_JSON_URL}`, 'info');
+    _pushLog(panel, '  ④ 启用脚本 + F5 ST', 'info');
+    _pushLog(panel, '点「📋 复制 URL」按钮自动复制到剪贴板', 'info');
 }
 
 async function _copyCfsMvuUrl(panel) {
+    // Day 8: 复制酒馆助手脚本 JSON URL（不再是 git URL）
     try {
-        await navigator.clipboard.writeText(CFS_MVU_GITHUB_URL);
-        _pushLog(panel, `📋 已复制 git URL 到剪贴板：${CFS_MVU_GITHUB_URL}`, 'success');
+        await navigator.clipboard.writeText(CFS_MVU_SCRIPT_JSON_URL);
+        _pushLog(panel, `📋 已复制酒馆助手脚本 URL：${CFS_MVU_SCRIPT_JSON_URL}`, 'success');
+        _pushLog(panel, '  ↳ 去酒馆助手 → 全局脚本 → 从 URL 导入 → 粘贴', 'info');
     } catch {
-        _pushLog(panel, `📋 复制失败 — git URL：${CFS_MVU_GITHUB_URL}`, 'warn');
+        _pushLog(panel, `📋 自动复制失败，手动复制：${CFS_MVU_SCRIPT_JSON_URL}`, 'warn');
     }
 }
 
@@ -615,8 +592,8 @@ function _renderPanel(panel) {
     html += '<button id="cfs-act-audit">🔍 重新校验 entry 位置</button>';
     html += '<button id="cfs-act-ls-clear" class="danger">🗑️ 清空 Path 缓存</button>';
     // Day 7-5/7-6
-    html += '<button id="cfs-act-install-mvu" class="primary">📦 一键装 CFS-MVU</button>';
-    html += '<button id="cfs-act-copy-mvu-url">📋 复制 CFS-MVU URL</button>';
+    html += '<button id="cfs-act-install-mvu" class="primary">📋 CFS-MVU 安装指引</button>';
+    html += '<button id="cfs-act-copy-mvu-url">📋 复制脚本 URL</button>';
     html += '<button id="cfs-act-scan-mvu" class="danger">🚫 扫描禁用其他 MVU</button>';
     html += '</div>';
 
