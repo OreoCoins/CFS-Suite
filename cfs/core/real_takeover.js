@@ -306,6 +306,39 @@ void _r;
  // 容错：空内容时写一个简短占位避免空 entry 异常
  if (!finalContent) finalContent = '<!-- CFS v4.x: stat_data 跨轮稳定，无 delta -->';
 
+ // === CFS v5.0 Day 9: Full Refresh 长期记忆锚点 ===
+ // 用户可在胶囊面板配置「N 轮 full refresh 一次」防止主 LLM 长期失忆编错跨轮稳定字段
+ // interval=0 关闭（保持纯 v4_full 模式，cache 最友好）
+ // interval=N: 每 N 轮（计数从 1 开始），第 N 轮 dynamic entry content = 全量 stat_data YAML
+ //   该轮 cache prefix miss（约 1/N 概率），其他轮仍走 STABLE_BATCH
+ var _frInterval = 0;
+ var _frCounter = 0;
+ try {
+   var rawInterval = localStorage.getItem('cfs-suite/full_refresh_interval');
+   var rawCounter = localStorage.getItem('cfs-suite/full_refresh_counter');
+   _frInterval = parseInt(rawInterval || '0', 10) || 0;
+   _frCounter = parseInt(rawCounter || '0', 10) || 0;
+ } catch (_e0) { }
+ _frCounter++;
+ if (_frInterval > 0 && _frCounter >= _frInterval) {
+   try {
+     var yamlText = (typeof YAML !== 'undefined' && YAML && YAML.stringify)
+       ? YAML.stringify(sd)
+       : JSON.stringify(sd, null, 2);
+     finalContent =
+       '<!-- CFS v5.0 Full Refresh: 全量 stat_data（用户配置每 ' + _frInterval + ' 轮注入一次，本轮触发） -->\n' +
+       '```yaml\n' + yamlText + '\n```\n' +
+       finalContent;
+     _frCounter = 0;
+     L.info('🔄 Full Refresh #' + (_injectionCount + 1) + ' 注入全量 stat_data (' + yamlText.length + ' 字符)，本轮 cache prefix 局部 miss');
+   } catch (eFr) {
+     L.warn('Full Refresh 序列化失败，本轮保持原 v4_full 路径', eFr);
+   }
+ }
+ try {
+   localStorage.setItem('cfs-suite/full_refresh_counter', String(_frCounter));
+ } catch (_e1) { }
+
  // 5. ensure dynamic entry exists + 更新 content
  await ensureDynamicEntry();
  var wb = await SFL.getActiveWorldbook();

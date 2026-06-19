@@ -391,6 +391,23 @@ const CFS_MVU_GITHUB_URL = 'https://github.com/OreoCoins/CFS-MVU';
 const CFS_MVU_SCRIPT_JSON_URL = 'https://raw.githubusercontent.com/OreoCoins/CFS-MVU/main/artifact/cfs-mvu-tavern-helper-script.json';
 const _cfsMvuStatus = { installed: null, version: null, lastCheckedAt: 0 };
 
+// ===== Day 9: Full Refresh 长期记忆锚点配置 =====
+const LS_FULL_REFRESH_INTERVAL = 'cfs-suite/full_refresh_interval';
+const LS_FULL_REFRESH_COUNTER = 'cfs-suite/full_refresh_counter';
+
+function _getFullRefreshInterval() {
+    try { return parseInt(localStorage.getItem(LS_FULL_REFRESH_INTERVAL) || '0', 10) || 0; }
+    catch { return 0; }
+}
+function _getFullRefreshCounter() {
+    try { return parseInt(localStorage.getItem(LS_FULL_REFRESH_COUNTER) || '0', 10) || 0; }
+    catch { return 0; }
+}
+function _setFullRefreshInterval(n) {
+    try { localStorage.setItem(LS_FULL_REFRESH_INTERVAL, String(Math.max(0, parseInt(n, 10) || 0))); }
+    catch { }
+}
+
 function _getCsrfHeaders() {
     // ST 真 getRequestHeaders 带 CSRF token；window.getRequestHeaders 由 polyfill 或 ST 提供
     try {
@@ -604,6 +621,21 @@ function _renderPanel(panel) {
     html += '<div class="row"><span class="k">CFS-MVU 扩展</span><span class="mvu-status-line">' + _renderMvuStatusLine() + '</span></div>';
     html += '</div>';
 
+    // Day 9: Full Refresh 长期记忆锚点配置 section
+    const frInterval = _getFullRefreshInterval();
+    const frCounter = _getFullRefreshCounter();
+    const frStatus = frInterval === 0
+        ? '<span class="v warn">关闭（纯 v4_full，cache 最友好但 LLM 可能失忆）</span>'
+        : `<span class="v ok">每 ${frInterval} 轮注入一次（已累计 ${frCounter}/${frInterval}，剩 ${Math.max(0, frInterval - frCounter)} 轮触发）</span>`;
+    html += '<div class="section">';
+    html += '<div class="section-title">长期记忆锚点（Full Refresh）</div>';
+    html += `<div class="row"><span class="k">当前状态</span>${frStatus}</div>`;
+    html += '<div class="row" style="align-items:center"><span class="k">每 N 轮刷新</span>';
+    html += `<input type="number" id="cfs-fr-interval" value="${frInterval}" min="0" max="9999" style="width:80px;background:#0e0e0f;color:#e0e0e0;border:1px solid #444;border-radius:4px;padding:3px 6px;font-size:11px"> <button id="cfs-fr-save" style="padding:2px 8px;font-size:10px;width:auto;margin:0 0 0 4px">保存</button>`;
+    html += '</div>';
+    html += '<div class="hint" style="margin-top:4px">• 0 = 关闭（默认）• 20 = 高频刷新 • 50 = 中等 • 100 = 稀刷 • 越小 cache miss 越多，但 LLM 越不容易失忆</div>';
+    html += '</div>';
+
     // 操作按钮 — 用人话
     html += '<div class="actions">';
     html += '<button id="cfs-act-enable" class="primary">🥵 启用接管</button>';
@@ -734,6 +766,21 @@ function _renderPanel(panel) {
     panel.querySelector('#cfs-act-install-mvu')?.addEventListener('click', () => _installCfsMvu(panel));
     panel.querySelector('#cfs-act-copy-mvu-url')?.addEventListener('click', () => _copyCfsMvuUrl(panel));
     panel.querySelector('#cfs-act-scan-mvu')?.addEventListener('click', () => _scanAndDisableOtherMvu(panel));
+
+    // Day 9: Full Refresh 配置保存
+    panel.querySelector('#cfs-fr-save')?.addEventListener('click', () => {
+        const input = panel.querySelector('#cfs-fr-interval');
+        const n = parseInt(input?.value ?? '0', 10) || 0;
+        _setFullRefreshInterval(n);
+        if (n === 0) {
+            _pushLog(panel, '🔄 Full Refresh 已关闭（保持纯 v4_full cache 最友好模式）', 'warn');
+        } else {
+            _pushLog(panel, `🔄 Full Refresh 设为每 ${n} 轮刷新一次（重置计数器）`, 'success');
+            // 用户改 interval 时同步重置计数器，避免下轮立刻触发
+            try { localStorage.setItem(LS_FULL_REFRESH_COUNTER, '0'); } catch {}
+        }
+        setTimeout(() => _renderPanel(panel), 300);
+    });
 
     // 异步刷新 CFS-MVU 状态
     _refreshCfsMvuStatus(panel);
