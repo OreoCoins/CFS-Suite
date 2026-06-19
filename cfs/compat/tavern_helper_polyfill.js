@@ -64,9 +64,58 @@ if (typeof window.TavernHelper !== 'object' || window.TavernHelper === null) {
     polyfilledApis.push('TavernHelper (stub)');
 }
 
-// ===== Worldbook / 变量层 polyfill 占位 =====
-// 这些在 Day 4 path_registry 接入时落地，当前保持未定义让真正用到的模块
-// 在调用时报清晰错误，而不是静默吞。
+// ===== getScriptId / 变量层 polyfill (Day 4) =====
+// 原 CFS 在酒馆助手脚本里跑，靠 getScriptId() 拿酒馆助手脚本 UUID；script-level 变量
+// 通过 getVariables({type:'script', script_id}) / updateVariablesWith(fn, opts) 持久化。
+// ST 原生扩展环境用 localStorage 兜底，namespace 用固定 script_id。
+
+const CFS_SUITE_SCRIPT_ID = 'cfs-suite-native-v5';
+const LS_SCRIPT_VAR_PREFIX = 'cfs-suite/scriptvars/';
+
+_polyfillGlobal('getScriptId', () => CFS_SUITE_SCRIPT_ID);
+
+_polyfillGlobal('getVariables', (opts) => {
+    try {
+        if (!opts || opts.type === 'script') {
+            const key = LS_SCRIPT_VAR_PREFIX + (opts?.script_id ?? CFS_SUITE_SCRIPT_ID);
+            const raw = localStorage.getItem(key);
+            return raw ? JSON.parse(raw) : {};
+        }
+        // 'chat' / 'message' 类型 — CFS 核心层不用，留空对象
+        return {};
+    } catch {
+        return {};
+    }
+});
+
+_polyfillGlobal('updateVariablesWith', (updater, opts) => {
+    try {
+        if (!opts || opts.type === 'script') {
+            const key = LS_SCRIPT_VAR_PREFIX + (opts?.script_id ?? CFS_SUITE_SCRIPT_ID);
+            const cur = JSON.parse(localStorage.getItem(key) || '{}');
+            const next = updater(cur) ?? cur;
+            localStorage.setItem(key, JSON.stringify(next));
+        }
+        // 其他 type 静默忽略
+    } catch (e) {
+        console.warn(`${Tag} updateVariablesWith 持久化失败`, e);
+    }
+});
+
+_polyfillGlobal('insertOrAssignVariables', (vars, opts) => {
+    try {
+        const key = LS_SCRIPT_VAR_PREFIX + ((opts?.script_id) ?? CFS_SUITE_SCRIPT_ID);
+        const cur = JSON.parse(localStorage.getItem(key) || '{}');
+        const next = Object.assign(cur, vars ?? {});
+        localStorage.setItem(key, JSON.stringify(next));
+    } catch (e) {
+        console.warn(`${Tag} insertOrAssignVariables 失败`, e);
+    }
+});
+
+// ===== Worldbook polyfill (Day 5) =====
+// 这些在 path_registry / TavernHelper.* lorebook 实际用到时再写，
+// 当前保持未定义让真正用到的模块在调用时报清晰错误，而不是静默吞。
 
 if (polyfilledApis.length > 0) {
     console.log(`${Tag} ${polyfilledApis.length} 项已挂：${polyfilledApis.join(', ')}`);

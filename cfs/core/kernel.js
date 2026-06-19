@@ -21,38 +21,12 @@
  */
 
 import { polyfilledApis as _cfsPolyfillReport } from '../compat/tavern_helper_polyfill.js';
+// Day 4 起：CFS4 完整 init 由 statdata_engine.js 做（含 EVENTS / NS / loadConfig / saveConfig
+// + 模块挂载点完整字段）。ESM import 保证 statdata_engine.js IIFE 先跑完。
+import './statdata_engine.js';
 
 // 让 lint 警告别叫；polyfill 副作用挂全局后下面 IIFE 用全局变量
 void _cfsPolyfillReport;
-
-// ============================================================
-// CFS4 minimal boot — 微内核的 abort 守卫检查 CFS4._loaded
-// Day 4 SchemaFrozenLayer/SchemaSwapGate 等接管时把更多字段填上来。
-// ============================================================
-if (!window.CFS4 || !window.CFS4._loaded) {
-    window.CFS4 = {
-        _loaded: true,
-        version: '5.0.0-day3',
-        _cfg: null,
-        log: {
-            debug: function (m, d) { console.log('[CFS4]', m, d !== undefined ? d : ''); },
-            info: function (m, d) { console.log('[CFS4]', m, d !== undefined ? d : ''); },
-            warn: function (m, d) { console.warn('[CFS4]', m, d !== undefined ? d : ''); },
-            error: function (m, d) { console.error('[CFS4]', m, d !== undefined ? d : ''); },
-        },
-        // 模块挂载点（占位）
-        SessionGate: null,
-        Coordinator: null,
-        NotificationCenter: null,
-        SchemaFrozenLayer: null,
-        SchemaSwapGate: null,
-        SchemaResolver: null,
-        PathRegistry: null,
-        DiffEngine: null,
-        PresenceEncoder: null,
-        InjectionStrategy: null,
-    };
-}
 
 // ============================================================
 // 以下整段为 cfs_content_extracted.js L1842-2594 的原样迁移（IIFE 形态）
