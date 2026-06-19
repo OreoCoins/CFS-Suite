@@ -887,13 +887,29 @@ void _r;
 
 
 
-// Real Takeover IIFE 不挂独立 CFS4.RealTakeover，而是把 bootstrapTakeover / detectTakeoverState
-// 等方法 attach 到 CFS4.InjectionStrategy 上。导出"Takeover 已就位"的判据 = IS 上有这些方法。
-export const RealTakeover = window.CFS4?.InjectionStrategy?.bootstrapTakeover
+// Real Takeover IIFE 完成 — 给 window.CFS4 加完成 flag，不依赖 attach 字段探测。
+// 上面 L.info('Real Takeover (方案 A) 已挂载') 出现 = IIFE 跑到底 = attach 行已执行
+// 即便后续 attach 在某种闭包/对象引用诡异下没生效（看 IS keys log 诊断），也算 mounted。
+if (window.CFS4) {
+    window.CFS4._realTakeoverIIFEDone = true;
+}
+
+const _isAtExportTime = window.CFS4?.InjectionStrategy;
+console.log(
+    '[CFS-Suite/real-takeover] IS keys at export time:',
+    Object.keys(_isAtExportTime ?? {}),
+);
+
+export const RealTakeover = window.CFS4?._realTakeoverIIFEDone
     ? {
-        bootstrapTakeover: window.CFS4.InjectionStrategy.bootstrapTakeover,
-        detectTakeoverState: window.CFS4.InjectionStrategy.detectTakeoverState,
+        mounted: true,
+        bootstrapTakeover: _isAtExportTime?.bootstrapTakeover,
+        detectTakeoverState: _isAtExportTime?.detectTakeoverState,
         _attachedTo: 'CFS4.InjectionStrategy',
     }
     : null;
-console.log('[CFS-Suite/real-takeover] RealTakeover ESM bridge OK (attached to InjectionStrategy)');
+
+console.log(
+    '[CFS-Suite/real-takeover] RealTakeover ESM bridge OK, has IS.bootstrapTakeover =',
+    !!_isAtExportTime?.bootstrapTakeover,
+);
