@@ -33,8 +33,8 @@ function _mountCapsule() {
     style.textContent = `
         #cfs-suite-capsule {
             position: fixed;
-            right: 16px;
-            bottom: 92px;
+            right: max(16px, env(safe-area-inset-right, 16px));
+            bottom: calc(96px + env(safe-area-inset-bottom, 0px));
             z-index: 9999;
             background: linear-gradient(135deg, #2a7f4f 0%, #1a5c3a 100%);
             color: #fff;
@@ -171,6 +171,15 @@ function _mountCapsule() {
             margin: 0;
         }
         #cfs-suite-panel .log-clear-btn:hover { color: #fff; border-color: #888; }
+
+        /* 移动端避开 ST #send_form / 底部导航条；横竖屏都覆盖 */
+        @media (max-width: 768px), (max-height: 500px) {
+            #cfs-suite-capsule {
+                bottom: calc(140px + env(safe-area-inset-bottom, 0px));
+                padding: 10px 16px;
+                font-size: 13px;
+            }
+        }
     `;
     document.head.appendChild(style);
 
@@ -186,6 +195,20 @@ function _mountCapsule() {
 
     // ===== 恢复保存的位置 =====
     _restorePosition(capsule);
+    _clampToViewport(capsule);
+
+    // 横竖屏切换 / 窗口缩放后重新钳制，防止旧 px 位置落到不可视区
+    let _resizeRaf = 0;
+    const _onResize = () => {
+        if (_resizeRaf) return;
+        _resizeRaf = requestAnimationFrame(() => {
+            _resizeRaf = 0;
+            _clampToViewport(capsule);
+            if (panel.classList.contains('open')) _repositionPanel(capsule, panel);
+        });
+    };
+    window.addEventListener('resize', _onResize);
+    window.addEventListener('orientationchange', _onResize);
 
     // ===== 拖拽 =====
     let dragOffsetX = 0, dragOffsetY = 0;
@@ -271,6 +294,24 @@ function _restorePosition(capsule) {
             capsule.style.bottom = 'auto';
         }
     } catch {}
+}
+
+function _clampToViewport(capsule) {
+    // 只对显式 left/top 像素值生效；默认 right/bottom 由 CSS + env() 处理
+    if (!capsule.style.left && !capsule.style.top) return;
+    const margin = 4;
+    const w = capsule.offsetWidth || 180;
+    const h = capsule.offsetHeight || 36;
+    const maxLeft = Math.max(margin, window.innerWidth - w - margin);
+    const maxTop = Math.max(margin, window.innerHeight - h - margin);
+    const curLeft = parseFloat(capsule.style.left) || capsule.getBoundingClientRect().left;
+    const curTop = parseFloat(capsule.style.top) || capsule.getBoundingClientRect().top;
+    const newLeft = Math.min(maxLeft, Math.max(margin, curLeft));
+    const newTop = Math.min(maxTop, Math.max(margin, curTop));
+    capsule.style.left = newLeft + 'px';
+    capsule.style.top = newTop + 'px';
+    capsule.style.right = 'auto';
+    capsule.style.bottom = 'auto';
 }
 
 function _repositionPanel(capsule, panel) {
