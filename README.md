@@ -30,7 +30,7 @@
 - **Real Takeover 加 `_observeAndAdjust` 观察器** — 在 `applyInjection` 末尾扫 `diff.present`：本轮没变的字段 stable_rounds++、本轮变化的字段立即降级（Fast Demote）。连续 20 轮没变 + 不在白名单 → 自动升 stable（Slow Promote）
 - **抖动锁定** — 反复 promote/demote 3 次后永久 volatile，防止跳来跳去打断 cache
 - **Periodic Decay** — 默认每 100 轮 promote_count/demote_count 各 -1（不低于 0），给"早期波动后稳定下来"的字段重试窗口，防 regime shift 锁死
-- **跨卡通用** — 不依赖 schema 字段命名，靠运行时观察 + 通用末段正则白名单兜底（HP/SAN/当前/状态/位置/余额/经验/欲望/淫乱/堕落/进度/count/cnt/time/timestamp/round/tick）
+- **跨卡通用** — 不依赖 schema 字段命名，靠运行时观察 + 通用末段正则白名单兜底
 - **胶囊配置面板** — 5 项 LS 配置项可调（开关 / promote 阈值 / 抖动锁定阈值 / decay 周期 / 黑名单正则）+ 上次扫描统计显示
 - **F12 API** — `window.CFS4.InjectionStrategy.getAutoPromoteState()` / `.resetAutoPromoteCounters()`
 
