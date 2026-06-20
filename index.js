@@ -50,11 +50,16 @@ import { RealTakeover } from './cfs/core/real_takeover.js';
 import { PSIS } from './cfs/modules/psis.js';
 import { SEM } from './cfs/modules/sem.js';
 import { PSISPlus } from './cfs/modules/psis_plus.js';
+// Day 11: RSI 运行时结构诊断器 — 跟 PSIS+ 分层互补，看真实出去的 messages 拓扑
+import { RSI } from './cfs/modules/rsi.js';
+// Day 11: Full Refresh 改由 scheduler 订阅 MESSAGE_RECEIVED 真按对话轮次触发
+//          （旧 Day 9 内联 applyInjection counter 失效 BUG 的根治）
+import './cfs/core/full_refresh_scheduler.js';
 // Day 4 附加 UI：右下角浮动胶囊 + 折叠面板（完整 panel.js 留 Day 6）
 import './cfs/ui/floating_capsule.js';
 
 const TAG = '[CFS-Suite]';
-const VERSION = '5.0.0-day6';
+const VERSION = '5.3.0';
 
 console.log(`${TAG} v${VERSION} loading...`);
 
@@ -79,6 +84,8 @@ eventSource.once(event_types.APP_READY, () => {
         PSIS: !!PSIS,
         SEM: !!SEM,
         PSISPlus: !!PSISPlus,
+        // Day 11 — RSI 运行时结构诊断器
+        RSI: !!RSI,
         // CFSMvuBundle 检查暂时移除（bundle 加载已禁用，等 MVU 路线重审）
         CFS4Version: window.CFS4?.version,
         MvuExists: !!window.Mvu,

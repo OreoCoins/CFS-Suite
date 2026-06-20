@@ -492,9 +492,9 @@ void _r;
    '<button id="cfs-sem-btn-migrate" class="cfs-btn cfs-btn-primary">⬆ 迁移选中</button> ' +
    '<button id="cfs-sem-btn-rescan" class="cfs-btn">🔄 重新扫描</button>' +
    '</div>' +
-   '<table class="cfs-sem-table"><thead><tr>' +
+   '<div class="cfs-sem-table-wrap"><table class="cfs-sem-table"><thead><tr>' +
    '<th>☑</th><th>uid</th><th>标题</th><th>长度</th><th>位置</th><th>稳态</th><th>密度</th><th>预估收益</th>' +
-   '</tr></thead><tbody>' + rows + '</tbody></table>';
+   '</tr></thead><tbody>' + rows + '</tbody></table></div>';
  }
 
  function _semRenderMigList(mig) {
@@ -532,9 +532,9 @@ void _r;
    '<button id="cfs-sem-btn-rb-all" class="cfs-btn">↩↩ 全部回滚</button> ' +
    '<button id="cfs-sem-btn-back" class="cfs-btn">⬅ 返回扫描</button>' +
    '</div>' +
-   '<table class="cfs-sem-table"><thead><tr>' +
+   '<div class="cfs-sem-table-wrap"><table class="cfs-sem-table"><thead><tr>' +
    '<th>☑</th><th>uid</th><th>标题</th><th>当前位置</th><th>建议位置</th><th>迁移时间</th>' +
-   '</tr></thead><tbody>' + rows + '</tbody></table>';
+   '</tr></thead><tbody>' + rows + '</tbody></table></div>';
  }
 
  // === bindEvents：在 panel innerHTML 重写后调用，绑定 SEM 区按钮 ===

@@ -510,17 +510,19 @@ void _r;
    var rec = arr[i];
    var ts = new Date(rec.timestamp).toLocaleString();
    var idx = arr.length - 1 - i;
+   var affectedStr = (rec.affected || []).join(', ');
+   var affectedEsc = _psisPlusEsc(affectedStr);
    rows += '<tr><td>' + idx + '</td>' +
     '<td>' + ts + '</td>' +
     '<td>' + _psisPlusEsc(rec.preset_name) + '</td>' +
-    '<td>' + (rec.affected || []).join(', ') + '</td>' +
+    '<td title="' + affectedEsc + '">' + affectedEsc + '</td>' +
     '<td><button class="cfs-btn cfs-psisp-btn-restore-idx" data-idx="' + idx + '">↩ 还原</button></td>' +
     '</tr>';
   }
   return '<div class="cfs-psisp-summary">操作记录 ' + arr.length + ' 条（FIFO，上限 ' + PSIS_PLUS_HISTORY_LIMIT + '）</div>' +
-   '<table class="cfs-sem-table"><thead><tr>' +
+   '<div class="cfs-sem-table-wrap"><table class="cfs-sem-table"><thead><tr>' +
    '<th>idx</th><th>时间</th><th>预设</th><th>影响 markers</th><th></th>' +
-   '</tr></thead><tbody>' + rows + '</tbody></table>' +
+   '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
    '<div class="cfs-psisp-actions">' +
    '<button id="cfs-psisp-btn-back" class="cfs-btn">⬅ 返回</button>' +
    '</div>';

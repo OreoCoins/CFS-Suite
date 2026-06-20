@@ -16,7 +16,7 @@
  */
 
 const TAG = '[CFS-Suite/ui]';
-const VERSION = '5.0.0-day5';
+const VERSION = '5.3.0';
 const LS_POS_KEY = 'cfs-suite/ui/capsule_position_v2';
 // 一次性清理 v1 旧 key：v1 默认右下，部分手机机型不可见；v2 改默认右上
 // 老用户升级后 v2 不存在 → 走新默认 CSS（右上角）→ 不再被 ST #send_form / iOS home indicator 遮住
@@ -48,8 +48,12 @@ function _mountCapsule() {
             cursor: move;
             box-shadow: 0 4px 14px rgba(0,0,0,0.3);
             user-select: none;
+            -webkit-user-select: none;
+            touch-action: none; /* Day 11: 阻止浏览器把触摸当滚动消化掉 */
             transition: transform 0.1s ease;
         }
+        #cfs-suite-capsule .capsule-icon::before { content: '🥵'; }
+        #cfs-suite-capsule .capsule-text { margin-left: 2px; }
         #cfs-suite-capsule:hover { transform: scale(1.05); }
         #cfs-suite-capsule.dragging {
             transition: none;
@@ -71,6 +75,7 @@ function _mountCapsule() {
             max-width: 400px;
             max-height: 70vh;
             overflow-y: auto;
+            overflow-x: hidden; /* Day 11: 兜底 — 子组件无意溢出全部截断防穿帮 */
             padding: 14px 16px;
             font-size: 12px;
             font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
@@ -175,12 +180,22 @@ function _mountCapsule() {
         }
         #cfs-suite-panel .log-clear-btn:hover { color: #fff; border-color: #888; }
 
-        /* 移动端胶囊本体放大方便触屏命中（位置已锚定右上，无需再调 top/right） */
-        @media (max-width: 768px), (max-height: 500px) {
+        /* Day 11: 移动端切纯小圆球（40×40 emoji-only），文字进 panel */
+        @media (max-width: 768px) {
             #cfs-suite-capsule {
-                padding: 10px 16px;
-                font-size: 13px;
+                width: 40px;
+                height: 40px;
+                padding: 0;
+                border-radius: 50%;
+                font-size: 22px;
+                line-height: 1;
+                display: flex;
+                align-items: center;
+                justify-content: center;
             }
+            #cfs-suite-capsule .capsule-icon::before { content: '🧐'; }
+            #cfs-suite-capsule .capsule-text { display: none; }
+            #cfs-suite-capsule:hover { transform: none; }
         }
     `;
     document.head.appendChild(style);
@@ -188,7 +203,8 @@ function _mountCapsule() {
     // ===== DOM =====
     const capsule = document.createElement('div');
     capsule.id = 'cfs-suite-capsule';
-    capsule.textContent = `🥵 CFS缓存优化器 · 加载中`;
+    // Day 11: 拆 icon / text 两个 span — 移动端 CSS 隐藏 text、icon 用 ::before 切 emoji
+    capsule.innerHTML = '<span class="capsule-icon"></span><span class="capsule-text">CFS缓存优化器 · 加载中</span>';
     document.body.appendChild(capsule);
 
     const panel = document.createElement('div');
@@ -212,43 +228,37 @@ function _mountCapsule() {
     window.addEventListener('resize', _onResize);
     window.addEventListener('orientationchange', _onResize);
 
-    // ===== 拖拽 =====
+    // ===== 拖拽（Day 11: 抽 mouse/touch 共用 handlers）=====
     let dragOffsetX = 0, dragOffsetY = 0;
     let dragStartX = 0, dragStartY = 0;
     let isDragging = false;
     let didMove = false;
 
-    capsule.addEventListener('mousedown', (e) => {
-        e.preventDefault();
+    function _onDragStart(clientX, clientY) {
         isDragging = true;
         didMove = false;
         capsule.classList.add('dragging');
         const rect = capsule.getBoundingClientRect();
-        dragOffsetX = e.clientX - rect.left;
-        dragOffsetY = e.clientY - rect.top;
-        dragStartX = e.clientX;
-        dragStartY = e.clientY;
-    });
-
-    document.addEventListener('mousemove', (e) => {
+        dragOffsetX = clientX - rect.left;
+        dragOffsetY = clientY - rect.top;
+        dragStartX = clientX;
+        dragStartY = clientY;
+    }
+    function _onDragMove(clientX, clientY) {
         if (!isDragging) return;
-        const dx = e.clientX - dragStartX;
-        const dy = e.clientY - dragStartY;
-        if (!didMove && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
-            didMove = true;
-        }
-        if (didMove) {
-            const left = Math.max(0, Math.min(window.innerWidth - capsule.offsetWidth, e.clientX - dragOffsetX));
-            const top = Math.max(0, Math.min(window.innerHeight - capsule.offsetHeight, e.clientY - dragOffsetY));
-            capsule.style.left = left + 'px';
-            capsule.style.top = top + 'px';
-            capsule.style.right = 'auto';
-            capsule.style.bottom = 'auto';
-            _repositionPanel(capsule, panel);
-        }
-    });
-
-    document.addEventListener('mouseup', () => {
+        const dx = clientX - dragStartX;
+        const dy = clientY - dragStartY;
+        if (!didMove && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) didMove = true;
+        if (!didMove) return;
+        const left = Math.max(0, Math.min(window.innerWidth - capsule.offsetWidth, clientX - dragOffsetX));
+        const top = Math.max(0, Math.min(window.innerHeight - capsule.offsetHeight, clientY - dragOffsetY));
+        capsule.style.left = left + 'px';
+        capsule.style.top = top + 'px';
+        capsule.style.right = 'auto';
+        capsule.style.bottom = 'auto';
+        _repositionPanel(capsule, panel);
+    }
+    function _onDragEnd() {
         if (!isDragging) return;
         isDragging = false;
         capsule.classList.remove('dragging');
@@ -267,12 +277,33 @@ function _mountCapsule() {
                 _renderPanel(panel);
             }
         }
+    }
+
+    // mouse 套
+    capsule.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        _onDragStart(e.clientX, e.clientY);
     });
+    document.addEventListener('mousemove', (e) => _onDragMove(e.clientX, e.clientY));
+    document.addEventListener('mouseup', _onDragEnd);
+
+    // touch 套（passive:true 不阻 click 派发；touch-action:none 已防滚动）
+    capsule.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1) return;
+        _onDragStart(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: true });
+    document.addEventListener('touchmove', (e) => {
+        if (!isDragging || e.touches.length !== 1) return;
+        e.preventDefault(); // 拖动中阻止页面滚动
+        _onDragMove(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: false });
+    document.addEventListener('touchend', _onDragEnd);
+    document.addEventListener('touchcancel', _onDragEnd);
 
     // 点面板外关闭
     document.addEventListener('click', (e) => {
         if (isDragging) return;
-        if (!panel.contains(e.target) && e.target !== capsule) {
+        if (!panel.contains(e.target) && e.target !== capsule && !capsule.contains(e.target)) {
             panel.classList.remove('open');
         }
     });
@@ -351,6 +382,7 @@ function _moduleStatus() {
         'PSIS R1 守护': !!c._psisIIFEDone,
         'SEM 迁移器': !!c.SEM,
         'PSIS+ 重排器': !!c.PSISPlus,
+        'RSI 诊断器': !!c.RSI,
     };
 }
 
@@ -386,12 +418,15 @@ function _updateCapsuleStatus(capsule) {
     const mode = window.CFS4?.FallbackStrategy?.getCurrentMode?.() ?? '?';
     const modeLbl = _modeLabel(mode);
 
+    // Day 11: 文字写进 .capsule-text 子元素（icon 由 CSS ::before 控制 + 移动端隐藏 text）
+    const textEl = capsule.querySelector('.capsule-text');
+    if (!textEl) return; // DOM 异常兜底（理论不可达）
     if (mounted === total && (phase === 'DONE' || phase === 'READY_FULL')) {
-        capsule.textContent = `🥵 CFS缓存优化器 · ${modeLbl.text}`;
+        textEl.textContent = `CFS缓存优化器 · ${modeLbl.text}`;
     } else if (mounted === total) {
-        capsule.textContent = `🥵 CFS缓存优化器 · ${_phaseLabel(phase).text}`;
+        textEl.textContent = `CFS缓存优化器 · ${_phaseLabel(phase).text}`;
     } else {
-        capsule.textContent = `🥵 CFS缓存优化器 · 加载中 ${mounted}/${total}`;
+        textEl.textContent = `CFS缓存优化器 · 加载中 ${mounted}/${total}`;
     }
 }
 
@@ -485,6 +520,55 @@ function _setAutoPromoteCfg(patch) {
 function _getAutoPromoteState() {
     try { return window.CFS4?.InjectionStrategy?.getAutoPromoteState?.() || null; }
     catch { return null; }
+}
+
+// ===== Day 11: 长期记忆策略 — 三档预设 =====
+const LS_LTM_PRESET = 'cfs-suite/long_term_memory_preset';
+const LTM_PRESETS = {
+    thrifty:  { label: '🚀 节流',  promoteAfter: 10, thrashLock: 3, decayEveryN: 100, fullRefreshInterval: 0,  hint: '只用稳态识别；关闭周期校准；cache 命中率优先。' },
+    standard: { label: '⚖️ 标准',  promoteAfter: 20, thrashLock: 3, decayEveryN: 100, fullRefreshInterval: 50, hint: '默认；20 轮稳态识别 + 每 50 轮做一次完整快照校准。' },
+    stable:   { label: '🛡️ 稳定',  promoteAfter: 30, thrashLock: 3, decayEveryN: 100, fullRefreshInterval: 20, hint: '稳态识别更保守 + 校准频率较高（每 20 轮一次完整快照）。' },
+};
+function _getLtmPreset() {
+    try { return localStorage.getItem(LS_LTM_PRESET) || ''; } catch { return ''; }
+}
+function _setLtmPreset(name) {
+    try { localStorage.setItem(LS_LTM_PRESET, name); } catch {}
+}
+function _applyLtmPreset(name) {
+    const p = LTM_PRESETS[name];
+    if (!p) return false;
+    _setAutoPromoteCfg({
+        enabled: true,
+        promoteAfter: p.promoteAfter,
+        thrashLock: p.thrashLock,
+        decayEveryN: p.decayEveryN,
+        whitelistRe: DEFAULT_AP_VOLATILE_RE,
+    });
+    _setFullRefreshInterval(p.fullRefreshInterval);
+    // 切预设时重置 counter 避免立即触发
+    try { localStorage.setItem(LS_FULL_REFRESH_COUNTER, '0'); } catch {}
+    _setLtmPreset(name);
+    return true;
+}
+// 升级路径：老用户没存预设 → 根据现有 LS 数值反推
+function _inferLtmPreset() {
+    const saved = _getLtmPreset();
+    if (saved && LTM_PRESETS[saved]) return saved;
+    if (saved === 'custom') return 'custom';
+    const ap = _getAutoPromoteCfg();
+    const fri = _getFullRefreshInterval();
+    for (const [name, p] of Object.entries(LTM_PRESETS)) {
+        if (ap.promoteAfter === p.promoteAfter
+            && ap.thrashLock === p.thrashLock
+            && ap.decayEveryN === p.decayEveryN
+            && fri === p.fullRefreshInterval
+            && ap.whitelistRe === DEFAULT_AP_VOLATILE_RE
+            && ap.enabled === true) {
+            return name;
+        }
+    }
+    return 'custom';
 }
 
 function _getCsrfHeaders() {
@@ -733,61 +817,75 @@ function _renderPanel(panel) {
     html += '</div>';
     html += '</div>';
 
-    // Day 9: Full Refresh 长期记忆锚点配置 section
+    // Day 11: 长期记忆策略 section（合并原 Day 9 Full Refresh + Day 10 Auto Stable Promotion）
     const frInterval = _getFullRefreshInterval();
     const frCounter = _getFullRefreshCounter();
-    const frStatus = frInterval === 0
-        ? '<span class="v warn">关闭（纯 v4_full，cache 最友好但 LLM 可能失忆）</span>'
-        : `<span class="v ok">每 ${frInterval} 轮注入一次（已累计 ${frCounter}/${frInterval}，剩 ${Math.max(0, frInterval - frCounter)} 轮触发）</span>`;
-    html += '<div class="section">';
-    html += '<div class="section-title">长期记忆锚点（Full Refresh）</div>';
-    html += `<div class="row"><span class="k">当前状态</span>${frStatus}</div>`;
-    html += '<div class="row" style="align-items:center"><span class="k">每 N 轮刷新</span>';
-    html += `<input type="number" id="cfs-fr-interval" value="${frInterval}" min="0" max="9999" style="width:80px;background:#0e0e0f;color:#e0e0e0;border:1px solid #444;border-radius:4px;padding:3px 6px;font-size:11px"> <button id="cfs-fr-save" style="padding:2px 8px;font-size:10px;width:auto;margin:0 0 0 4px">保存</button>`;
-    html += '</div>';
-    html += '<div class="hint" style="margin-top:4px">• 0 = 关闭（默认）• 20 = 高频刷新 • 50 = 中等 • 100 = 稀刷 • 越小 cache miss 越多，但 LLM 越不容易失忆</div>';
-    html += '</div>';
-
-    // Day 10: 自动 Stable Promotion 配置 section
     const apCfg = _getAutoPromoteCfg();
     const apState = _getAutoPromoteState();
     const apLast = apState?.last;
     const apTotals = apState?.totals || { promoted: 0, demoted: 0, decayed: 0 };
+    const currentPreset = _inferLtmPreset();
+    const presetSummaryHtml = Object.entries(LTM_PRESETS).map(([name, p]) => {
+        const active = name === currentPreset;
+        const style = active
+            ? 'background:#2a7f4f;color:#fff;border:1px solid #3a8f5f'
+            : 'background:#1a1a1f;color:#cfcfd5;border:1px solid #2a2a30';
+        return `<button class="cfs-ltm-preset-btn" data-preset="${name}" style="${style};padding:6px 10px;border-radius:4px;cursor:pointer;font-size:11px;width:auto;margin:0;flex:1;min-width:0">${p.label}</button>`;
+    }).join('');
     const apStatusLine = apCfg.enabled
-        ? `<span class="v ok">已开启 — 已识别 ${apTotals.promoted} 个稳态字段 / 撤销了 ${apTotals.demoted} 次${apTotals.decayed ? ' / 重置 ' + apTotals.decayed + ' 次' : ''}</span>`
-        : '<span class="v warn">已关闭 — 不优化，所有字段都当变化字段处理</span>';
+        ? `<span class="v ok">已开启 — 已识别 ${apTotals.promoted} 个稳态字段 / 撤销 ${apTotals.demoted} 次${apTotals.decayed ? ' / 重置 ' + apTotals.decayed + ' 次' : ''}</span>`
+        : '<span class="v warn">已关闭 — 所有字段都当变化字段处理</span>';
     const apLastLine = apLast
         ? `<span class="v">第 ${apLast.round} 轮 / 查了 ${apLast.scanned} 个字段 / 本轮新认 ${apLast.promoted} 个 / 撤销 ${apLast.demoted} 个${apLast.locked ? ' / 已放弃 ' + apLast.locked + ' 个' : ''}</span>`
         : '<span class="v warn">尚未开始</span>';
-    // Day 10 第三轮 UX 优化：每项配置独立成行，label 在上 input 在下，去掉 promote/demote/volatile/decay 术语换人话
+    const frStatusLine = frInterval === 0
+        ? '<span class="v warn">已关闭 — 不做周期完整快照</span>'
+        : `<span class="v ok">每 ${frInterval} 轮注入一次完整快照（${frCounter}/${frInterval}，剩 ${Math.max(0, frInterval - frCounter)} 轮触发）</span>`;
+    const currentPresetHint = currentPreset === 'custom'
+        ? '当前为「自定义」— 任一高级参数与三档预设不匹配时落到此模式'
+        : (LTM_PRESETS[currentPreset]?.hint || '');
+
     html += '<div class="section">';
-    html += '<div class="section-title">自动识别稳态字段（Day 10）</div>';
-    html += `<div class="row" style="margin-top:4px"><span class="k">当前状态</span>${apStatusLine}</div>`;
+    html += '<div class="section-title">📚 长期记忆策略</div>';
+    html += `<div class="hint" style="margin:4px 0 8px 0">① 决定多少字段以 schema 占位符注入 — 越多 cache 越友好<br>② 长会话兜底：每 K 轮把当前全量数据塞一份做完整快照校准</div>`;
+    // 三档预设
+    html += `<div style="display:flex;gap:6px;margin:8px 0">${presetSummaryHtml}</div>`;
+    html += `<div class="hint" style="margin:4px 0 8px 0;color:#8acaff">当前：${LTM_PRESETS[currentPreset]?.label || '🛠️ 自定义'} — ${currentPresetHint}</div>`;
+    // 状态行
+    html += `<div class="row" style="margin-top:8px"><span class="k">① 稳态识别</span>${apStatusLine}</div>`;
+    html += `<div class="row"><span class="k">② 周期校准</span>${frStatusLine}</div>`;
     html += `<div class="row"><span class="k">上次扫描</span>${apLastLine}</div>`;
+    // 高级参数折叠
+    html += '<details class="cfs-ltm-advanced" style="margin-top:10px"><summary style="cursor:pointer;font-size:11px;padding:4px 0;color:#888">⚙️ 高级参数 — 自定义调节（任一改动会切到「自定义」模式）</summary>';
+    html += '<div style="padding-top:8px">';
     // 开关
-    html += '<div style="margin-top:10px;padding:8px;background:#0e0e0f;border-radius:4px;border:1px solid #2a2a30">';
-    html += `<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;color:#e0e0e0"><input type="checkbox" id="cfs-ap-enabled" ${apCfg.enabled ? 'checked' : ''} style="width:14px;height:14px"> <b>启用自动识别</b> <span style="color:#888;font-size:10px">(关掉 = 完全不优化)</span></label>`;
+    html += '<div style="padding:8px;background:#0e0e0f;border-radius:4px;border:1px solid #2a2a30;margin-bottom:8px">';
+    html += `<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;color:#e0e0e0"><input type="checkbox" id="cfs-ap-enabled" ${apCfg.enabled ? 'checked' : ''} style="width:14px;height:14px"> <b>启用稳态识别</b> <span style="color:#888;font-size:10px">(关掉 = 完全不做 ①)</span></label>`;
     html += '</div>';
-    // 三个数字配置 — 每项一个块，标题在上输入在下
-    html += '<div style="margin-top:8px;display:flex;flex-direction:column;gap:8px">';
-    // 1. 多少轮算稳态
+    html += '<div style="display:flex;flex-direction:column;gap:8px">';
+    // ① promote after
     html += '<div style="padding:6px 8px;background:#0e0e0f;border-radius:4px;border:1px solid #2a2a30">';
     html += '<div style="font-size:11px;color:#e0e0e0;margin-bottom:4px"><b>① 多少轮没变化才算稳态字段？</b></div>';
-    html += `<div style="display:flex;align-items:center;gap:8px"><input type="number" id="cfs-ap-promote-after" value="${apCfg.promoteAfter}" min="1" max="9999" style="width:60px;background:#1a1a1f;color:#e0e0e0;border:1px solid #444;border-radius:3px;padding:3px 6px;font-size:11px"><span style="font-size:10px;color:#888">轮 — 越小越激进、越快省 token；推荐 20</span></div>`;
+    html += `<div style="display:flex;align-items:center;gap:8px"><input type="number" id="cfs-ap-promote-after" value="${apCfg.promoteAfter}" min="1" max="9999" style="width:60px;background:#1a1a1f;color:#e0e0e0;border:1px solid #444;border-radius:3px;padding:3px 6px;font-size:11px"><span style="font-size:10px;color:#888">轮 — 越小越激进；标准=20</span></div>`;
     html += '</div>';
-    // 2. 反复几次放弃
+    // ② thrash lock
     html += '<div style="padding:6px 8px;background:#0e0e0f;border-radius:4px;border:1px solid #2a2a30">';
     html += '<div style="font-size:11px;color:#e0e0e0;margin-bottom:4px"><b>② 一个字段反复变化几次就放弃尝试？</b></div>';
     html += `<div style="display:flex;align-items:center;gap:8px"><input type="number" id="cfs-ap-thrash-lock" value="${apCfg.thrashLock}" min="1" max="99" style="width:60px;background:#1a1a1f;color:#e0e0e0;border:1px solid #444;border-radius:3px;padding:3px 6px;font-size:11px"><span style="font-size:10px;color:#888">次 — 防止跳来跳去打断缓存；推荐 3</span></div>`;
     html += '</div>';
-    // 3. 多少轮重置
+    // ③ decay
     html += '<div style="padding:6px 8px;background:#0e0e0f;border-radius:4px;border:1px solid #2a2a30">';
     html += '<div style="font-size:11px;color:#e0e0e0;margin-bottom:4px"><b>③ 多少轮重置一次"放弃记录"？</b></div>';
     html += `<div style="display:flex;align-items:center;gap:8px"><input type="number" id="cfs-ap-decay" value="${apCfg.decayEveryN}" min="0" max="9999" style="width:60px;background:#1a1a1f;color:#e0e0e0;border:1px solid #444;border-radius:3px;padding:3px 6px;font-size:11px"><span style="font-size:10px;color:#888">轮 — 让早期被放弃的字段有机会重试；推荐 100，填 0 = 永不重置</span></div>`;
     html += '</div>';
-    // 4. 黑名单字段
+    // ④ Full Refresh interval
     html += '<div style="padding:6px 8px;background:#0e0e0f;border-radius:4px;border:1px solid #2a2a30">';
-    html += '<div style="font-size:11px;color:#e0e0e0;margin-bottom:4px"><b>④ 这些字段永远不要认作稳态（正则）</b></div>';
+    html += '<div style="font-size:11px;color:#e0e0e0;margin-bottom:4px"><b>④ 每多少轮做一次完整快照校准？</b></div>';
+    html += `<div style="display:flex;align-items:center;gap:8px"><input type="number" id="cfs-fr-interval" value="${frInterval}" min="0" max="9999" style="width:60px;background:#1a1a1f;color:#e0e0e0;border:1px solid #444;border-radius:3px;padding:3px 6px;font-size:11px"><span style="font-size:10px;color:#888">轮 — 0=关闭；标准=50；间隔越短 cache 越扰动</span></div>`;
+    html += '</div>';
+    // ⑤ 黑名单
+    html += '<div style="padding:6px 8px;background:#0e0e0f;border-radius:4px;border:1px solid #2a2a30">';
+    html += '<div style="font-size:11px;color:#e0e0e0;margin-bottom:4px"><b>⑤ 这些字段永远不要认作稳态（正则）</b></div>';
     html += `<textarea id="cfs-ap-whitelist" rows="2" style="width:100%;box-sizing:border-box;background:#1a1a1f;color:#e0e0e0;border:1px solid #444;border-radius:3px;padding:4px 6px;font-size:10px;font-family:monospace;resize:vertical">${(apCfg.whitelistRe || '').replace(/</g, '&lt;')}</textarea>`;
     html += '<div style="font-size:10px;color:#888;margin-top:3px">HP/SAN/当前位置/时间戳 这类每轮可能变的字段已默认覆盖</div>';
     html += '</div>';
@@ -795,9 +893,29 @@ function _renderPanel(panel) {
     // 按钮行
     html += '<div style="margin-top:10px;display:flex;justify-content:flex-end;gap:6px">';
     html += '<button id="cfs-ap-reset" style="padding:4px 12px;font-size:11px;width:auto;margin:0">重置识别结果</button>';
-    html += '<button id="cfs-ap-save" class="primary" style="padding:4px 14px;font-size:11px;width:auto;margin:0">保存配置</button>';
+    html += '<button id="cfs-ap-save" class="primary" style="padding:4px 14px;font-size:11px;width:auto;margin:0">保存自定义配置</button>';
     html += '</div>';
-    html += '<div class="hint" style="margin-top:6px">• 第一次开新卡至少要聊 ① 配的轮数才会开始省 token<br>• 字段一旦认作稳态后，剧情里它真变了会立刻撤销（保证数据正确）<br>• 关掉总开关 = 完全不优化（默认 81% 命中率天花板），开启后期望命中率回升 90%+</div>';
+    html += '</div>'; // close padding-top:8px
+    html += '</details>';
+    html += '</div>';
+
+    // Day 11: RSI 请求结构诊断 section（CHAT_COMPLETION_PROMPT_READY 拍快照 + 跨轮 hash 对账）
+    const rsi = window.CFS4?.RSI;
+    const rsiRounds = rsi?.getRoundsCount ? rsi.getRoundsCount() : 0;
+    const rsiSimple = rsi?.genSimpleOutput ? _escapeHtml(rsi.genSimpleOutput()) : '🔍 请求结构诊断 · RSI 模块未挂载';
+    html += '<div class="section">';
+    html += '<div class="section-title">🐞 请求结构诊断（RSI）</div>';
+    html += '<div class="hint" style="margin:4px 0 6px 0">看运行时真实发出去的 messages 拓扑（PSIS+ 只看预设静态拓扑，遗漏运行时注入的块）</div>';
+    html += `<pre id="cfs-rsi-output" style="background:#0e0e0f;border:1px solid #333;border-radius:4px;padding:8px 10px;font-family:'Consolas','Microsoft YaHei Mono',monospace;font-size:10px;line-height:1.5;color:#cfcfd5;max-height:280px;overflow:auto;margin:4px 0;white-space:pre">${rsiSimple}</pre>`;
+    html += '<details style="margin-top:6px"><summary style="cursor:pointer;font-size:11px;color:#888">📋 全表（所有块）</summary>';
+    html += `<pre id="cfs-rsi-full" style="background:#0e0e0f;border:1px solid #333;border-radius:4px;padding:8px 10px;font-family:'Consolas','Microsoft YaHei Mono',monospace;font-size:10px;line-height:1.5;color:#cfcfd5;max-height:320px;overflow:auto;margin:4px 0;white-space:pre">（点击展开后加载）</pre>`;
+    html += '</details>';
+    html += '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:6px">';
+    html += '<button id="cfs-rsi-refresh" style="padding:2px 10px;font-size:10px;width:auto;margin:0">🔄 刷新</button>';
+    html += '<button id="cfs-rsi-copy" style="padding:2px 10px;font-size:10px;width:auto;margin:0">📋 复制简洁版</button>';
+    html += '<button id="cfs-rsi-copy-full" style="padding:2px 10px;font-size:10px;width:auto;margin:0">📋 复制全表</button>';
+    html += '</div>';
+    html += `<div class="hint" style="margin-top:4px">${rsiRounds === 0 ? '尚未捕获任何请求；发一条消息后即可看到结构' : `已捕获 ${rsiRounds} 轮请求（buffer 上限 5）`}</div>`;
     html += '</div>';
 
     // 操作按钮 — 用人话
@@ -977,22 +1095,39 @@ function _renderPanel(panel) {
     panel.querySelector('#cfs-act-copy-mvu-url')?.addEventListener('click', () => _copyCfsMvuUrl(panel));
     panel.querySelector('#cfs-act-scan-mvu')?.addEventListener('click', () => _scanAndDisableOtherMvu(panel));
 
-    // Day 10: 自动 Stable Promotion 配置保存
+    // Day 11: 长期记忆策略 — 三档预设按钮
+    panel.querySelectorAll('.cfs-ltm-preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const name = btn.getAttribute('data-preset');
+            if (!LTM_PRESETS[name]) return;
+            _applyLtmPreset(name);
+            const p = LTM_PRESETS[name];
+            _pushLog(panel,
+                `📚 长期记忆策略已切到 ${p.label}：稳态@${p.promoteAfter}轮 / 校准@${p.fullRefreshInterval === 0 ? '关闭' : '每'+p.fullRefreshInterval+'轮'}`,
+                'success');
+            setTimeout(() => _renderPanel(panel), 200);
+        });
+    });
+
+    // Day 11: 高级参数 - 保存自定义配置（任一改动 → 自动切到 custom）
     panel.querySelector('#cfs-ap-save')?.addEventListener('click', () => {
         const enabled = !!panel.querySelector('#cfs-ap-enabled')?.checked;
         const promoteAfter = parseInt(panel.querySelector('#cfs-ap-promote-after')?.value, 10) || 20;
         const thrashLock = parseInt(panel.querySelector('#cfs-ap-thrash-lock')?.value, 10) || 3;
         const decayEveryN = parseInt(panel.querySelector('#cfs-ap-decay')?.value, 10) || 0;
+        const frInterval = Math.max(0, parseInt(panel.querySelector('#cfs-fr-interval')?.value, 10) || 0);
         const whitelistRe = panel.querySelector('#cfs-ap-whitelist')?.value?.trim() || DEFAULT_AP_VOLATILE_RE;
-        // 校验正则可编译
         try { new RegExp(whitelistRe); }
         catch (e) {
-            _pushLog(panel, '❌ volatile 白名单正则无效：' + (e?.message || e), 'error');
+            _pushLog(panel, '❌ 黑名单正则无效：' + (e?.message || e), 'error');
             return;
         }
         _setAutoPromoteCfg({ enabled, promoteAfter, thrashLock, decayEveryN, whitelistRe });
+        _setFullRefreshInterval(frInterval);
+        try { localStorage.setItem(LS_FULL_REFRESH_COUNTER, '0'); } catch {} // 切配置时同步重置 counter
+        _setLtmPreset('custom');
         _pushLog(panel,
-            `✓ 自动 promotion 配置已保存：${enabled ? '开启' : '关闭'} / promote@${promoteAfter}轮 / 抖动锁${thrashLock} / decay@${decayEveryN}轮`,
+            `✓ 自定义配置已保存：稳态识别${enabled ? '开' : '关'}@${promoteAfter}轮 / 完整快照${frInterval === 0 ? '关闭' : '每'+frInterval+'轮'}`,
             enabled ? 'success' : 'warn');
         setTimeout(() => _renderPanel(panel), 300);
     });
@@ -1014,19 +1149,34 @@ function _renderPanel(panel) {
         setTimeout(() => _renderPanel(panel), 300);
     });
 
-    // Day 9: Full Refresh 配置保存
-    panel.querySelector('#cfs-fr-save')?.addEventListener('click', () => {
-        const input = panel.querySelector('#cfs-fr-interval');
-        const n = parseInt(input?.value ?? '0', 10) || 0;
-        _setFullRefreshInterval(n);
-        if (n === 0) {
-            _pushLog(panel, '🔄 Full Refresh 已关闭（保持纯 v4_full cache 最友好模式）', 'warn');
-        } else {
-            _pushLog(panel, `🔄 Full Refresh 设为每 ${n} 轮刷新一次（重置计数器）`, 'success');
-            // 用户改 interval 时同步重置计数器，避免下轮立刻触发
-            try { localStorage.setItem(LS_FULL_REFRESH_COUNTER, '0'); } catch {}
-        }
-        setTimeout(() => _renderPanel(panel), 300);
+    // Day 11: RSI 事件 — 刷新 / 复制 / 全表展开按需加载
+    panel.querySelector('#cfs-rsi-refresh')?.addEventListener('click', () => {
+        const rsi = window.CFS4?.RSI;
+        const el = panel.querySelector('#cfs-rsi-output');
+        if (el && rsi?.genSimpleOutput) el.textContent = rsi.genSimpleOutput();
+        _pushLog(panel, '🔄 已刷新请求结构诊断', 'info');
+    });
+    panel.querySelector('#cfs-rsi-copy')?.addEventListener('click', async () => {
+        const rsi = window.CFS4?.RSI;
+        const text = rsi?.genSimpleOutput?.() ?? '';
+        if (!text) { _pushLog(panel, 'RSI 尚无数据', 'warn'); return; }
+        try { await navigator.clipboard.writeText(text); _pushLog(panel, '📋 简洁版已复制到剪贴板', 'success'); }
+        catch (e) { _pushLog(panel, '复制失败：' + (e?.message || e), 'error'); }
+    });
+    panel.querySelector('#cfs-rsi-copy-full')?.addEventListener('click', async () => {
+        const rsi = window.CFS4?.RSI;
+        const text = rsi?.genFullOutput?.() ?? '';
+        if (!text) { _pushLog(panel, 'RSI 尚无数据', 'warn'); return; }
+        try { await navigator.clipboard.writeText(text); _pushLog(panel, '📋 全表已复制到剪贴板', 'success'); }
+        catch (e) { _pushLog(panel, '复制失败：' + (e?.message || e), 'error'); }
+    });
+    // 全表按需加载（点 details summary 才算）
+    const rsiFullDetails = panel.querySelector('#cfs-rsi-full')?.closest('details');
+    rsiFullDetails?.addEventListener('toggle', () => {
+        if (!rsiFullDetails.open) return;
+        const rsi = window.CFS4?.RSI;
+        const el = panel.querySelector('#cfs-rsi-full');
+        if (el && rsi?.genFullOutput) el.textContent = rsi.genFullOutput();
     });
 
     // 异步刷新 CFS-MVU 状态
