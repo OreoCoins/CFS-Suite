@@ -1424,6 +1424,14 @@ void _r;
  return -1;
  }
  function psisIsR1Violation(entry) {
+ // 2026-06-21 v6.1.1 用户决定权：[cfs:ignore] 豁免补漏。
+ //   主路径 scanAll (L303) 已尊重 ignore，但 R1 自动守护这条平行路径漏判 →
+ //   导致用户加 ignore 后条目仍被 psisApplyR1Fix 强制踢到 before_character_definition/depth=4
+ //   (即 ↑char "角色定义前")。补一个最先匹配的豁免。
+ if (entry && entry.comment && typeof entry.comment === 'string'
+     && entry.comment.indexOf('[cfs:ignore]') >= 0) {
+ return false;
+ }
  // === 白名单 hook：CFS v4.x StatData Engine 自管的 entry 全部豁免===
  // 升级到三锚点 OR 判定（comment 魔法串 + keys 数组 + extensions 字段）
  if (entry) {

@@ -3,7 +3,7 @@
 > **Cache-Friendly Scanner 套餐版** —— SillyTavern 原生扩展。
 > CFS V4.9.3 完整接管层 + 浮动胶囊 6.0 UI,**装一个 = 装两个**(CFS 接管层 + CFS-MVU 套餐版酒馆助手脚本)。
 >
-> 当前版本:`v6.1.0` — PETL 浮动胶囊 UI 实装 + CFS-MVU 卡 MVU 接管 + SCHEMA VIOLATION 守护降级 + autoRegister 退避就绪重试
+> 当前版本:`v6.1.1` — `[cfs:ignore]` 豁免补漏(PSIS R1 自动守护路径)+ v6.1.0 全部功能
 
 ---
 
@@ -21,6 +21,22 @@ CFS Suite 是**霸王扩展**:
 - 接管仅在运行时,不删用户磁盘上的卡 / 扩展文件
 
 **如不接受这些规则,请装 [CFS Solo](https://github.com/OreoCoins/CFS-SillyTavern)**(单脚本版,不接管,仅 cache 优化)。
+
+---
+
+## 📋 v6.1.1 hotfix(2026-06-21)
+
+### `[cfs:ignore]` 豁免在 PSIS R1 自动守护路径漏判 → 补
+
+**用户反馈**:在世界书条目名称加 `[cfs:ignore]`,但条目仍被强制踢到 `before_character_definition / depth=4`(角色定义前 / ↑char)。
+
+**根因**:CFS 有四条修改 entry 位置的路径:
+- kernel.js audit、cfs/core/petl.js、cfs/modules/sem.js、cfs/modules/psis.js scanAll — 都尊重 `[cfs:ignore]` ✓
+- **cfs/modules/psis.js R1 自动守护**(`psisIsR1Violation` + `psisApplyR1Fix`)— 平行路径,**漏查 ignore** ❌
+
+R1 自动守护是 PSIS 核心机制:`constant=true && enabled=true` 且 position 不在静态白名单的条目 → 强制踢到 prefix 区(`before_character_definition / depth=4`,即 ↑char)以保护 prefix cache。判定函数 `psisIsR1Violation` 检查 `[CFS4_*]` 自管白名单但**忘了**检查 `[cfs:ignore]`。
+
+**修法**:`cfs/modules/psis.js psisIsR1Violation` 顶部最先匹配 `[cfs:ignore]` → return false 豁免。一行改动。
 
 ---
 
