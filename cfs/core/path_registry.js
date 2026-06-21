@@ -370,10 +370,59 @@ void _cfsPolyfillReport;
  if (sizeBytes > 40000) L.warn('PathRegistry boot 加载体积: ' + sizeBytes + ' bytes (接近 50KB)');
  } catch (_e) {}
  }
- // 主动 flush helper（chat_changed / disconnect 等场景调）
+ // 主动 flush helper（disconnect 等场景调）
  function _flushRegistry() {
  _persistRegistry();
  L.debug('PathRegistry 主动 flush 完成 (' + Object.keys(_registry).length + ' 条)');
+ }
+
+ // 2026-06-21 v6 hotfix：切卡霸王 reset
+ // 旧 BUG（v2.8.1 hotfix 副作用）：chat_id_changed 只调 _flushRegistry，
+ //   in-memory _registry 保留旧卡 paths + boot 函数"已有不覆盖"锁住覆盖路径
+ //   → 切到新卡后 PathRegistry.getAll() 仍是旧卡 423 条字段，整个 MVU 数据流按错卡字段跑
+ // 修：切卡时强制清空 in-memory + 触发新卡 autoRegister
+ // 注意 boot 时仍尊重 v2.8.1 "已有不覆盖" — 那条治的是落盘时序问题，不是切卡场景
+ var _lastSeenChatId = null;
+ function _currentChatIdSafe() {
+ try {
+ var ctx = (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) ? SillyTavern.getContext() : null;
+ if (ctx && typeof ctx.getCurrentChatId === 'function') return ctx.getCurrentChatId();
+ if (ctx && ctx.chatId != null) return ctx.chatId;
+ } catch (_e) {}
+ return null;
+ }
+ function _onChatChanged() {
+ var newChatId = _currentChatIdSafe();
+ // 防误触：chat_id_changed 在保存/重命名等场景也会触发但 chatId 没真变
+ if (newChatId != null && newChatId === _lastSeenChatId) {
+ L.debug('PathRegistry chat_id_changed 但 chatId 未变 (' + newChatId + ')，跳过 reset');
+ _persistRegistry();
+ return;
+ }
+ var prevCount = Object.keys(_registry).length;
+ var prevChatId = _lastSeenChatId;
+ // 1. flush 当前 _registry 到 LS（旧卡数据保留在 LS，下次回到旧卡 boot 时能恢复）
+ try { _persistRegistry(); } catch (_e) {}
+ // 2. 霸王 reset：清空 in-memory
+ _registry = {};
+ _lastSeenChatId = newChatId;
+ L.warn('PathRegistry 切卡 reset: chatId ' + prevChatId + ' → ' + newChatId + '（清掉 ' + prevCount + ' 条旧卡 path）');
+ CFS4.emit('cfs_path_registry_chat_switched', { from: prevChatId, to: newChatId, cleared: prevCount });
+ // 3. 触发 autoRegister 重建新卡 paths（异步，1s 延迟等 ST 把新卡 stat_data 绑定完）
+ setTimeout(function () {
+ try {
+ var IS = CFS4 && CFS4.InjectionStrategy;
+ if (IS && typeof IS.autoRegisterFromStatData === 'function') {
+ Promise.resolve(IS.autoRegisterFromStatData({ default_class: 'volatile' }))
+ .then(function (auto) {
+ L.info('PathRegistry 切卡后 autoRegister: ' + (auto && auto.registered ? auto.registered : '?') + ' 条 (chatId=' + newChatId + ')');
+ })
+ .catch(function (e) { L.warn('PathRegistry 切卡后 autoRegister 失败', e); });
+ } else {
+ L.warn('PathRegistry 切卡：CFS4.InjectionStrategy.autoRegisterFromStatData 不可用，跳过');
+ }
+ } catch (e) { L.warn('PathRegistry 切卡 autoRegister 异常', e); }
+ }, 1000);
  }
 
  // 钩 cfs_schema_swap_committed → 失效 cache + 同步 registry
@@ -466,11 +515,15 @@ void _cfsPolyfillReport;
  if (Object.keys(_registry).length === 0) _bootRestoreRegistry();
  }, 2600);
 
- // chat_changed 时主动 flush，对抗 ST 内部落盘延迟
+ // 2026-06-21 v6 hotfix：chat 切换走霸王 reset 路径，不再只 flush
+ // 老代码：eventOn('chat_changed', _flushRegistry) → 只保存，导致切卡后 _registry 仍是旧卡数据
+ // 新：eventOn('chat_changed', _onChatChanged) → flush 旧 + reset in-memory + autoRegister 新卡
  try {
  if (typeof eventOn === 'function') {
- eventOn('chat_changed', _flushRegistry);
- eventOn('chat_id_changed', _flushRegistry);
+ eventOn('chat_changed', _onChatChanged);
+ eventOn('chat_id_changed', _onChatChanged);
+ // 初始化 _lastSeenChatId（首次 boot 时填一次，避免 boot 后第一次 chat_id_changed 误判为"切卡"）
+ setTimeout(function () { if (_lastSeenChatId == null) _lastSeenChatId = _currentChatIdSafe(); }, 500);
  }
  } catch (e) { L.warn('chat_changed 钩失败', e); }
 

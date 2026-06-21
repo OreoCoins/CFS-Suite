@@ -299,6 +299,8 @@ void _r;
  }
  for (let j = 0; j < entries.length; j++) {
  const entry = entries[j];
+ // 2026-06-21 用户决定权：[cfs:ignore] 标记的条目完全不参与 PSIS 分类
+ if (entry.comment && entry.comment.indexOf('[cfs:ignore]') >= 0) continue;
  const cats = classify(entry.comment, entry.content);
  if (cats.length === 0) continue;
 
@@ -625,30 +627,52 @@ void _r;
  T.success('✅ 已修回: ' + r.success + ' 条' + (r.failed ? '，失败 ' + r.failed : ''));
  await scanAll(); render();
  }
- async function enableAllSystemInterfaces() {
- const list = STATE.systemEntries;
- const targets = list.filter(function (s) { return !s.enabled; });
- if (targets.length === 0) { T.info('所有系统接口已全部启用'); return; }
- const oneshotCount = targets.filter(function (s) { return s.subtype === 'oneshot'; }).length;
- if (!askConfirm('启用全部 ' + targets.length + ' 条系统接口（含 ' + oneshotCount + ' 条 initvar）？\n开局后记得关 initvar。')) return;
+
+ // 2026-06-21 新增：读 UI 勾选框 → 返回选中 uid 的 entry 列表（按 lorebook 分组的 raw 数据）
+ function _getCheckedEntries() {
+ const checked = [];
+ const boxes = D.querySelectorAll('.cfs-mvu-entry-chk');
+ for (let i = 0; i < boxes.length; i++) {
+ if (!boxes[i].checked) continue;
+ const uid = Number(boxes[i].getAttribute('data-cfs-uid'));
+ const lb = boxes[i].getAttribute('data-cfs-lb');
+ const sub = boxes[i].getAttribute('data-cfs-sub');
+ const rec = STATE.systemEntries.find(function (s) { return s.uid === uid && s.lorebook === lb; });
+ if (rec) checked.push({ rec: rec, sub: sub });
+ }
+ return checked;
+ }
+
+ // 启用勾选的条目（不动 position）
+ async function enableSelectedInterfaces() {
+ const checked = _getCheckedEntries();
+ if (checked.length === 0) { T.info('请先勾选要启用的条目'); return; }
+ const alreadyOn = checked.filter(function (x) { return x.rec.enabled; }).length;
+ const toggle = checked.filter(function (x) { return !x.rec.enabled; });
+ if (toggle.length === 0) { T.info('选中的 ' + alreadyOn + ' 条都已启用'); return; }
+ if (!askConfirm('启用选中的 ' + toggle.length + ' 条？\n（其中已启用 ' + alreadyOn + ' 条跳过）')) return;
  const groups = {};
- for (let i = 0; i < targets.length; i++) {
- const t = targets[i];
+ for (let i = 0; i < toggle.length; i++) {
+ const t = toggle[i].rec;
  if (!groups[t.lorebook]) groups[t.lorebook] = [];
  groups[t.lorebook].push({ uid: t.uid, enabled: true });
  }
  const r = await applySystemEntryPatches(groups);
- T.success('✅ 已启用: ' + r.success + ' 条 initvar');
+ T.success('✅ 已启用: ' + r.success + ' 条' + (r.failed ? '，失败 ' + r.failed : ''));
  await scanAll(); render();
  }
- async function disableOneShotInterfaces() {
- const list = STATE.systemEntries;
- const targets = list.filter(function (s) { return s.subtype === 'oneshot' && s.enabled; });
- if (targets.length === 0) { T.info('没有需要关闭的一次性接口'); return; }
- if (!askConfirm('禁用 ' + targets.length + ' 条一次性 initvar 接口？\n顺便把 position 改成 at_depth_as_user/depth=0 cache 友好。')) return;
+
+ // 禁用勾选的条目 + 改 position 到 cache 友好位置（沿用旧 disableOneShot 的策略）
+ async function disableSelectedInterfaces() {
+ const checked = _getCheckedEntries();
+ if (checked.length === 0) { T.info('请先勾选要禁用的条目'); return; }
+ const alreadyOff = checked.filter(function (x) { return !x.rec.enabled; }).length;
+ const toggle = checked.filter(function (x) { return x.rec.enabled; });
+ if (toggle.length === 0) { T.info('选中的 ' + alreadyOff + ' 条都已禁用'); return; }
+ if (!askConfirm('禁用选中的 ' + toggle.length + ' 条？\n位置一并调到 at_depth_as_user/depth=0 让 cache 友好。\n（已禁用 ' + alreadyOff + ' 条跳过）')) return;
  const groups = {};
- for (let i = 0; i < targets.length; i++) {
- const t = targets[i];
+ for (let i = 0; i < toggle.length; i++) {
+ const t = toggle[i].rec;
  if (!groups[t.lorebook]) groups[t.lorebook] = [];
  groups[t.lorebook].push({
  uid: t.uid, enabled: false,
@@ -656,7 +680,7 @@ void _r;
  });
  }
  const r = await applySystemEntryPatches(groups);
- T.success('✅ 已关闭: ' + r.success + ' 条 initvar');
+ T.success('✅ 已禁用: ' + r.success + ' 条' + (r.failed ? '，失败 ' + r.failed : ''));
  await scanAll(); render();
  }
 
@@ -745,7 +769,17 @@ void _r;
  : (s.subtype === 'oneshot' && s.enabled)
  ? ' <span class="cfs-mvu-warn">⚠️ 开局后建议关</span>'
  : '';
+ // 2026-06-21 用户决定权：每条 entry 加勾选框，默认勾选「建议操作」的（非 v4 接管 + 非审查协议）
+ //   v4 接管中 / 审查协议 / 已在合理状态的 → 默认不勾，避免误操作
+ const shouldDefaultCheck = !isV4Managed && !isReview && (
+   (s.subtype === 'persistent' && !s.enabled) ||
+   (s.subtype === 'oneshot' && s.enabled)
+ );
+ const checkedAttr = shouldDefaultCheck ? 'checked' : '';
+ // dataset 编码 uid + lorebook 让 bind 能直接读
+ const dataAttr = ' data-cfs-uid="' + s.uid + '" data-cfs-lb="' + esc(s.lorebook) + '" data-cfs-sub="' + (s.subtype || '') + '"';
  return '<div class="cfs-mvu-entry">' +
+ '<label class="cfs-mvu-chk-label"><input type="checkbox" class="cfs-mvu-entry-chk"' + dataAttr + ' ' + checkedAttr + ' title="勾选 = 让底部按钮处理这条"></label>' +
  '<span class="cfs-mvu-name">' + esc(s.comment) + '</span>' +
  '<span class="cfs-mvu-meta">uid=' + s.uid + ' · ' + esc(s.lorebook) + '</span>' +
  '<span class="cfs-mvu-status">' + status + warn + '</span>' +
@@ -866,14 +900,18 @@ void _r;
  html += '<div class="cfs-mvu-section"><div class="cfs-mvu-title">一次性接口（开局用，开局后关）</div>' +
  oneshot.map(renderEntry).join('') + '</div>';
  }
+ html += '<div class="cfs-mvu-selectbar">' +
+ '<button id="cfs-mvu-sel-all" class="cfs-btn cfs-btn-mini">☑ 全选</button>' +
+ '<button id="cfs-mvu-sel-none" class="cfs-btn cfs-btn-mini">☐ 全不选</button>' +
+ '<button id="cfs-mvu-sel-invert" class="cfs-btn cfs-btn-mini">↔ 反选</button>' +
+ '<span class="cfs-mvu-sel-hint">下面按钮只会作用于已勾选的条目。审查协议 / v4 接管中的条目默认不勾，需要操作请手动勾选。</span>' +
+ '</div>';
  html += '<div class="cfs-mvu-actions">' +
- '<button id="cfs-mvu-restore" class="cfs-btn ' + (persistDisabled > 0 ? 'cfs-btn-primary' : '') + '" title="把被禁用的常驻接口一键修回">' +
- '🔁 修回常驻 ' + (persistDisabled > 0 ? '(' + persistDisabled + ')' : '') + '</button>' +
- '<button id="cfs-mvu-open" class="cfs-btn" title="开新卡 / 重置变量池前用">🆕 开新卡前</button>' +
- '<button id="cfs-mvu-close" class="cfs-btn ' + (oneshotEnabled > 0 ? 'cfs-btn-warn' : '') + '" title="AI 第一轮完成后用">' +
- '🔒 关 initvar ' + (oneshotEnabled > 0 ? '(' + oneshotEnabled + ')' : '') + '</button>' +
+ '<button id="cfs-mvu-restore" class="cfs-btn cfs-btn-primary" title="启用选中的条目（不修 position）">✅ 启用选中</button>' +
+ '<button id="cfs-mvu-close" class="cfs-btn cfs-btn-warn" title="禁用选中的条目 + 把 position 调到 at_depth_as_user/depth=0 让 cache 友好">🔒 禁用选中（+ 修 position）</button>' +
+ '<span class="cfs-mvu-counter" id="cfs-mvu-chk-counter">已勾选 0 条</span>' +
  '</div>' +
- '<div class="cfs-mvu-tip">💡 典型生命周期：<b>开新卡前</b> → AI 第一轮 → <b>关 initvar</b>。</div>' +
+ '<div class="cfs-mvu-tip">💡 典型生命周期：开新卡前 → ✅ 启用选中（含 initvar）→ AI 第一轮 → 🔒 禁用选中（initvar）。审查协议条目由你自己决定要不要勾。</div>' +
  '</div></details>';
  // Day 10 修复 ID 冲突：胶囊已挂 PSIS+/SEM section（同 ID cfs-psisp-root/cfs-sem-root）
  // 完整面板里不再重复渲染，否则 document.getElementById 只能拿到第一份，第二份按钮全失活
@@ -939,10 +977,16 @@ void _r;
   : '一键把三大块全部需优化的强制改成 at_depth_as_user, depth=0';
  const _fixAllText = _fixAllPaused ? '⏸ 三大块归零（已暂停）' : ('⚡⚡ 三大块全部归零' + (totalNeedFix > 0 ? ' (' + totalNeedFix + ')' : ''));
 
+ // 2026-06-21 v6 阶段 B：切卡自动归零 dynamic toggle
+ //   ⚠️ 用 IIFE 顶层已有的 P (= window.parent || window)，不要用 _CFS4G —— 那是 _registerV31Plugin 函数内 var
+ const _autoZeroOn = !!(P.CFS4 && P.CFS4.PSISAutoZero && P.CFS4.PSISAutoZero.isEnabled());
+ const _autoZeroBtnCls = _autoZeroOn ? 'cfs-btn cfs-btn-guard-on' : 'cfs-btn';
+ const _autoZeroBtnText = _autoZeroOn ? '⚡ 切卡自动归零 (开)' : '⚡ 切卡自动归零 (关)';
+
  panel.innerHTML =
  '<div class="cfs-card">' +
  '<div class="cfs-head">' +
- '<h3>🛡️ CFS v4.9.3 (PSIS v3.1.7 + PSIS+ v4.9.3 + 接管 v4.8.1 + SEM v4.9.1)</h3>' +
+ '<h3>🛡️ MVU 守护面板 — V4.9.3 功能</h3>' +
  '<button class="cfs-close" id="cfs-btn-close" title="关闭">✕</button>' +
  '<div class="cfs-lbs">' + (lbInfo.join(' · ') || '<i>未识别绑定世界书 — 先扫描</i>') + '</div>' +
  '</div>' +
@@ -951,6 +995,7 @@ void _r;
  '<button id="cfs-btn-scan" class="cfs-btn cfs-btn-primary">🔍 扫描</button>' +
  '<button id="cfs-btn-fix-all" class="' + _fixAllCls + '" ' + _fixAllDisabled + ' title="' + _fixAllTitle + '">' +
  _fixAllText + '</button>' +
+ '<button id="cfs-btn-auto-zero" class="' + _autoZeroBtnCls + '" title="切卡时静默自动归零动态注入类条目，避免破坏 cache 命中。LS key cfs-suite/auto_zero_dynamic_on_chat_change">' + _autoZeroBtnText + '</button>' +
  '<button id="cfs-btn-guard" class="' + guardBtnCls + '" title="每次世界书更新自动把三大块 depth 归 0">' + guardBtnText + '</button>' +
  '</div>' +
  (guardStatLine ? '<div class="cfs-guard-stat">' + guardStatLine + '</div>' : '') +
@@ -993,12 +1038,53 @@ void _r;
  b.onclick = function () { applyFixesByCategory(b.getAttribute('data-fix-cat')); };
  }
  D.getElementById('cfs-btn-guard').onclick = toggleGuard;
+ // 2026-06-21 v6 阶段 B：切卡自动归零 toggle
+ const _btnAutoZero = D.getElementById('cfs-btn-auto-zero');
+ if (_btnAutoZero) _btnAutoZero.onclick = function () {
+  const azApi = P.CFS4 && P.CFS4.PSISAutoZero;
+  if (!azApi) return;
+  const cur = !!azApi.isEnabled();
+  azApi.setEnabled(!cur);
+  T[cur ? 'info' : 'success']('切卡自动归零 dynamic：' + (cur ? '已关闭' : '已启用'));
+  render();
+ };
+ // 2026-06-21 改为 per-entry 勾选模式
  const btnRestore = D.getElementById('cfs-mvu-restore');
- if (btnRestore) btnRestore.onclick = restorePersistentInterfaces;
- const btnOpen = D.getElementById('cfs-mvu-open');
- if (btnOpen) btnOpen.onclick = enableAllSystemInterfaces;
+ if (btnRestore) btnRestore.onclick = enableSelectedInterfaces;
  const btnClose = D.getElementById('cfs-mvu-close');
- if (btnClose) btnClose.onclick = disableOneShotInterfaces;
+ if (btnClose) btnClose.onclick = disableSelectedInterfaces;
+
+ // 全选 / 全不选 / 反选 + 实时计数器
+ const _updateChkCounter = function () {
+  const counter = D.getElementById('cfs-mvu-chk-counter');
+  if (!counter) return;
+  const boxes = D.querySelectorAll('.cfs-mvu-entry-chk');
+  let on = 0;
+  for (let i = 0; i < boxes.length; i++) if (boxes[i].checked) on++;
+  counter.textContent = '已勾选 ' + on + ' 条';
+ };
+ const btnSelAll = D.getElementById('cfs-mvu-sel-all');
+ if (btnSelAll) btnSelAll.onclick = function () {
+  const boxes = D.querySelectorAll('.cfs-mvu-entry-chk');
+  for (let i = 0; i < boxes.length; i++) boxes[i].checked = true;
+  _updateChkCounter();
+ };
+ const btnSelNone = D.getElementById('cfs-mvu-sel-none');
+ if (btnSelNone) btnSelNone.onclick = function () {
+  const boxes = D.querySelectorAll('.cfs-mvu-entry-chk');
+  for (let i = 0; i < boxes.length; i++) boxes[i].checked = false;
+  _updateChkCounter();
+ };
+ const btnSelInvert = D.getElementById('cfs-mvu-sel-invert');
+ if (btnSelInvert) btnSelInvert.onclick = function () {
+  const boxes = D.querySelectorAll('.cfs-mvu-entry-chk');
+  for (let i = 0; i < boxes.length; i++) boxes[i].checked = !boxes[i].checked;
+  _updateChkCounter();
+ };
+ // 任意单条勾选变化也更新计数
+ const allBoxes = D.querySelectorAll('.cfs-mvu-entry-chk');
+ for (let i = 0; i < allBoxes.length; i++) allBoxes[i].addEventListener('change', _updateChkCounter);
+ _updateChkCounter();
  const btnAutoToggle = D.getElementById('cfs-mvu-auto-toggle');
  if (btnAutoToggle) btnAutoToggle.onclick = toggleAutoLifecycle;
 
@@ -1650,6 +1736,65 @@ void _r;
  }
  }
  setTimeout(_registerV31Plugin, 0);
+
+ // ============================================================
+ // 2026-06-21 v6 阶段 B：切卡自动归零 dynamic 类
+ // LS toggle `cfs-suite/auto_zero_dynamic_on_chat_change`（默认 '1' 开）
+ // 切卡后延 1.5s 等 ST 绑定新卡 worldbook → scanAll → applyFixesByCategory('dynamic', silent)
+ // ============================================================
+ const LS_AUTO_ZERO_DYN = 'cfs-suite/auto_zero_dynamic_on_chat_change';
+ function _isAutoZeroDynEnabled() {
+  try { return localStorage.getItem(LS_AUTO_ZERO_DYN) !== '0'; } catch (e) { return true; }
+ }
+ function _setAutoZeroDyn(b) {
+  try { localStorage.setItem(LS_AUTO_ZERO_DYN, b ? '1' : '0'); } catch (e) {}
+ }
+ try {
+  eventOn('chat_id_changed', function () {
+   if (!_isAutoZeroDynEnabled()) return;
+   setTimeout(async function () {
+    try {
+     await scanAll();
+     const n = await applyFixesByCategory('dynamic', { silent: true, skipConfirm: true });
+     if (n > 0) {
+      console.log('[CFS-PSIS] ⚡ 切卡自动归零: ' + n + ' 条动态注入');
+      try {
+       if (typeof toastr !== 'undefined' && toastr.success) {
+        toastr.success('⚡ CFS 已自动归零 ' + n + ' 条动态注入 entry', 'CFS-Suite', { timeOut: 5000 });
+       }
+      } catch (_eToast) {}
+      if (D.getElementById(PANEL_ID)) render();
+     }
+    } catch (e) { console.error('[CFS-PSIS] 切卡自动归零异常', e); }
+   }, 1500);
+  });
+  console.log('[CFS-PSIS] 切卡自动归零 dynamic 已挂钩 (LS=' + LS_AUTO_ZERO_DYN + '=' + (localStorage.getItem(LS_AUTO_ZERO_DYN) ?? '<unset,默认开>') + ')');
+ } catch (e) { console.warn('[CFS-PSIS] chat_id_changed 挂钩失败', e); }
+
+ // 暴露 toggle API + PSIS patterns（F12 + UI + PETL 都能用）
+ // ⚠️ 旧 BUG: 错用了 `_CFS4G` —— 它是 `_registerV31Plugin` 函数内的 var，IIFE 闭包末尾不可见，
+ //   导致 `_CFS4G is not defined` ReferenceError，整套 ESM 链断 → 浮动胶囊消失。
+ //   修：本块独立声明 `_PSIS_PUBLISH` 别名（跟 _CFS4G 同语义），不依赖函数内 var。
+ const _PSIS_PUBLISH = (typeof window !== 'undefined' && window.parent) ? window.parent
+                     : (typeof window !== 'undefined' ? window : null);
+ if (_PSIS_PUBLISH) {
+  if (!_PSIS_PUBLISH.CFS4) _PSIS_PUBLISH.CFS4 = {};
+  _PSIS_PUBLISH.CFS4.PSISAutoZero = {
+   isEnabled: _isAutoZeroDynEnabled,
+   setEnabled: _setAutoZeroDyn,
+   runNow: async function () {
+    await scanAll();
+    return applyFixesByCategory('dynamic', { silent: true, skipConfirm: true });
+   },
+  };
+  // 2026-06-21 v6 阶段 C：暴露 PSIS 识别 patterns 给 PETL 复用
+  _PSIS_PUBLISH.CFS4.PSISPatterns = {
+   DYNAMIC: CFG.DYNAMIC_PATTERNS,
+   MVU: CFG.MVU_PATTERNS,
+   EXEMPT_ONESHOT: CFG.EXEMPT_ONESHOT_PATTERNS,
+   REVIEW_PROTOCOL: CFG.REVIEW_PROTOCOL_PATTERNS,
+  };
+ }
 
 })();
 

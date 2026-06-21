@@ -1,0 +1,909 @@
+{
+  "description": "《道渊》v5.1 2026-06-21 00:04-00:12 3 个主请求 (DeepSeek V4 Pro)",
+  "sourceDB": "WorldbookCacheInspectorDB_full_export.json",
+  "snapshots": [
+    {
+      "id": "cache_1781971482102_1",
+      "timestamp": 1781971482102,
+      "messages": [
+        {
+          "role": "system",
+          "length": 1009,
+          "hash": "2e27c390"
+        },
+        {
+          "role": "user",
+          "length": 50,
+          "hash": "2509be02"
+        },
+        {
+          "role": "user",
+          "length": 896,
+          "hash": "27b19992"
+        },
+        {
+          "role": "user",
+          "length": 102,
+          "hash": "5d36c904"
+        },
+        {
+          "role": "user",
+          "length": 450,
+          "hash": "93e21705"
+        },
+        {
+          "role": "user",
+          "length": 2869,
+          "hash": "9473d752"
+        },
+        {
+          "role": "user",
+          "length": 86,
+          "hash": "3ef5b321"
+        },
+        {
+          "role": "user",
+          "length": 233,
+          "hash": "b6db9e75"
+        },
+        {
+          "role": "user",
+          "length": 297,
+          "hash": "b7f01fe4"
+        },
+        {
+          "role": "user",
+          "length": 169,
+          "hash": "bcef8a20"
+        },
+        {
+          "role": "user",
+          "length": 294,
+          "hash": "b0010ae8"
+        },
+        {
+          "role": "user",
+          "length": 590,
+          "hash": "d9be343b"
+        },
+        {
+          "role": "user",
+          "length": 223,
+          "hash": "07a6d8b8"
+        },
+        {
+          "role": "user",
+          "length": 407,
+          "hash": "9f868544"
+        },
+        {
+          "role": "user",
+          "length": 718,
+          "hash": "d8a76480"
+        },
+        {
+          "role": "user",
+          "length": 2258,
+          "hash": "6a91049c"
+        },
+        {
+          "role": "user",
+          "length": 900,
+          "hash": "7d291910"
+        },
+        {
+          "role": "user",
+          "length": 142,
+          "hash": "5e11aeef"
+        },
+        {
+          "role": "user",
+          "length": 98,
+          "hash": "0580fbb5"
+        },
+        {
+          "role": "user",
+          "length": 313,
+          "hash": "0be138d1"
+        },
+        {
+          "role": "user",
+          "length": 306,
+          "hash": "c612bf08"
+        },
+        {
+          "role": "user",
+          "length": 124,
+          "hash": "a6276b1c"
+        },
+        {
+          "role": "user",
+          "length": 368,
+          "hash": "46c83085"
+        },
+        {
+          "role": "user",
+          "length": 337,
+          "hash": "3fbdae89"
+        },
+        {
+          "role": "user",
+          "length": 401,
+          "hash": "838e7af6"
+        },
+        {
+          "role": "user",
+          "length": 414,
+          "hash": "cb83d36a"
+        },
+        {
+          "role": "user",
+          "length": 8,
+          "hash": "10cb3c52"
+        },
+        {
+          "role": "user",
+          "length": 3188,
+          "hash": "f7f70f07"
+        },
+        {
+          "role": "user",
+          "length": 162,
+          "hash": "6e815337"
+        },
+        {
+          "role": "user",
+          "length": 6,
+          "hash": "23346191"
+        },
+        {
+          "role": "user",
+          "length": 533,
+          "hash": "fb8441df"
+        },
+        {
+          "role": "user",
+          "length": 667,
+          "hash": "48cb8d2c"
+        },
+        {
+          "role": "user",
+          "length": 1393,
+          "hash": "b0d293c3"
+        },
+        {
+          "role": "user",
+          "length": 7,
+          "hash": "1c123858"
+        },
+        {
+          "role": "user",
+          "length": 133,
+          "hash": "d946869c"
+        },
+        {
+          "role": "user",
+          "length": 184,
+          "hash": "9cb0189b"
+        },
+        {
+          "role": "user",
+          "length": 317,
+          "hash": "e826dfc0"
+        },
+        {
+          "role": "user",
+          "length": 8,
+          "hash": "5a863718"
+        },
+        {
+          "role": "user",
+          "length": 1056,
+          "hash": "a8d5c261"
+        },
+        {
+          "role": "user",
+          "length": 404,
+          "hash": "e063b99b"
+        },
+        {
+          "role": "user",
+          "length": 535,
+          "hash": "dcf598ef"
+        },
+        {
+          "role": "user",
+          "length": 6,
+          "hash": "ba0cdcd4"
+        },
+        {
+          "role": "user",
+          "length": 179,
+          "hash": "3beaaf42"
+        },
+        {
+          "role": "user",
+          "length": 7,
+          "hash": "7a3dfa81"
+        },
+        {
+          "role": "user",
+          "length": 76,
+          "hash": "19fe76c3"
+        },
+        {
+          "role": "user",
+          "length": 22875,
+          "hash": "5b20b230"
+        },
+        {
+          "role": "user",
+          "length": 290,
+          "hash": "0558ca05"
+        },
+        {
+          "role": "user",
+          "length": 117354,
+          "hash": "e611fdd2"
+        },
+        {
+          "role": "system",
+          "length": 219,
+          "hash": "40d9f91f"
+        },
+        {
+          "role": "user",
+          "length": 14422,
+          "hash": "a6db5c83"
+        },
+        {
+          "role": "user",
+          "length": 14,
+          "hash": "21edfb4c"
+        },
+        {
+          "role": "user",
+          "length": 6,
+          "hash": "2d5cfb87"
+        },
+        {
+          "role": "user",
+          "length": 8,
+          "hash": "c92c6268"
+        },
+        {
+          "role": "user",
+          "length": 27,
+          "hash": "50b1d3e4"
+        },
+        {
+          "role": "user",
+          "length": 187,
+          "hash": "fbd2bc23"
+        },
+        {
+          "role": "user",
+          "length": 783,
+          "hash": "902b84ec"
+        },
+        {
+          "role": "user",
+          "length": 340,
+          "hash": "57a27c20"
+        }
+      ]
+    },
+    {
+      "id": "cache_1781971637153_3",
+      "timestamp": 1781971637153,
+      "messages": [
+        {
+          "role": "system",
+          "length": 1009,
+          "hash": "2e27c390"
+        },
+        {
+          "role": "user",
+          "length": 50,
+          "hash": "2509be02"
+        },
+        {
+          "role": "user",
+          "length": 896,
+          "hash": "27b19992"
+        },
+        {
+          "role": "user",
+          "length": 102,
+          "hash": "5d36c904"
+        },
+        {
+          "role": "user",
+          "length": 450,
+          "hash": "93e21705"
+        },
+        {
+          "role": "user",
+          "length": 2869,
+          "hash": "9473d752"
+        },
+        {
+          "role": "user",
+          "length": 86,
+          "hash": "3ef5b321"
+        },
+        {
+          "role": "user",
+          "length": 233,
+          "hash": "b6db9e75"
+        },
+        {
+          "role": "user",
+          "length": 297,
+          "hash": "b7f01fe4"
+        },
+        {
+          "role": "user",
+          "length": 169,
+          "hash": "bcef8a20"
+        },
+        {
+          "role": "user",
+          "length": 294,
+          "hash": "b0010ae8"
+        },
+        {
+          "role": "user",
+          "length": 590,
+          "hash": "d9be343b"
+        },
+        {
+          "role": "user",
+          "length": 223,
+          "hash": "07a6d8b8"
+        },
+        {
+          "role": "user",
+          "length": 407,
+          "hash": "9f868544"
+        },
+        {
+          "role": "user",
+          "length": 718,
+          "hash": "d8a76480"
+        },
+        {
+          "role": "user",
+          "length": 2258,
+          "hash": "6a91049c"
+        },
+        {
+          "role": "user",
+          "length": 900,
+          "hash": "7d291910"
+        },
+        {
+          "role": "user",
+          "length": 142,
+          "hash": "5e11aeef"
+        },
+        {
+          "role": "user",
+          "length": 98,
+          "hash": "0580fbb5"
+        },
+        {
+          "role": "user",
+          "length": 313,
+          "hash": "0be138d1"
+        },
+        {
+          "role": "user",
+          "length": 306,
+          "hash": "c612bf08"
+        },
+        {
+          "role": "user",
+          "length": 124,
+          "hash": "a6276b1c"
+        },
+        {
+          "role": "user",
+          "length": 368,
+          "hash": "46c83085"
+        },
+        {
+          "role": "user",
+          "length": 337,
+          "hash": "3fbdae89"
+        },
+        {
+          "role": "user",
+          "length": 401,
+          "hash": "838e7af6"
+        },
+        {
+          "role": "user",
+          "length": 414,
+          "hash": "cb83d36a"
+        },
+        {
+          "role": "user",
+          "length": 8,
+          "hash": "10cb3c52"
+        },
+        {
+          "role": "user",
+          "length": 3188,
+          "hash": "f7f70f07"
+        },
+        {
+          "role": "user",
+          "length": 162,
+          "hash": "6e815337"
+        },
+        {
+          "role": "user",
+          "length": 6,
+          "hash": "23346191"
+        },
+        {
+          "role": "user",
+          "length": 533,
+          "hash": "fb8441df"
+        },
+        {
+          "role": "user",
+          "length": 667,
+          "hash": "48cb8d2c"
+        },
+        {
+          "role": "user",
+          "length": 1393,
+          "hash": "b0d293c3"
+        },
+        {
+          "role": "user",
+          "length": 7,
+          "hash": "1c123858"
+        },
+        {
+          "role": "user",
+          "length": 133,
+          "hash": "d946869c"
+        },
+        {
+          "role": "user",
+          "length": 184,
+          "hash": "9cb0189b"
+        },
+        {
+          "role": "user",
+          "length": 317,
+          "hash": "e826dfc0"
+        },
+        {
+          "role": "user",
+          "length": 8,
+          "hash": "5a863718"
+        },
+        {
+          "role": "user",
+          "length": 1056,
+          "hash": "a8d5c261"
+        },
+        {
+          "role": "user",
+          "length": 404,
+          "hash": "e063b99b"
+        },
+        {
+          "role": "user",
+          "length": 535,
+          "hash": "dcf598ef"
+        },
+        {
+          "role": "user",
+          "length": 6,
+          "hash": "ba0cdcd4"
+        },
+        {
+          "role": "user",
+          "length": 179,
+          "hash": "3beaaf42"
+        },
+        {
+          "role": "user",
+          "length": 7,
+          "hash": "7a3dfa81"
+        },
+        {
+          "role": "user",
+          "length": 76,
+          "hash": "19fe76c3"
+        },
+        {
+          "role": "user",
+          "length": 22875,
+          "hash": "5b20b230"
+        },
+        {
+          "role": "user",
+          "length": 290,
+          "hash": "0558ca05"
+        },
+        {
+          "role": "user",
+          "length": 117354,
+          "hash": "e611fdd2"
+        },
+        {
+          "role": "system",
+          "length": 219,
+          "hash": "40d9f91f"
+        },
+        {
+          "role": "assistant",
+          "length": 2118,
+          "hash": "ec69068c"
+        },
+        {
+          "role": "user",
+          "length": 17,
+          "hash": "799bf410"
+        },
+        {
+          "role": "user",
+          "length": 15242,
+          "hash": "d36ed7a2"
+        },
+        {
+          "role": "user",
+          "length": 14,
+          "hash": "21edfb4c"
+        },
+        {
+          "role": "user",
+          "length": 6,
+          "hash": "2d5cfb87"
+        },
+        {
+          "role": "user",
+          "length": 8,
+          "hash": "c92c6268"
+        },
+        {
+          "role": "user",
+          "length": 46,
+          "hash": "144359e4"
+        },
+        {
+          "role": "user",
+          "length": 187,
+          "hash": "fbd2bc23"
+        },
+        {
+          "role": "user",
+          "length": 783,
+          "hash": "902b84ec"
+        },
+        {
+          "role": "user",
+          "length": 340,
+          "hash": "57a27c20"
+        }
+      ]
+    },
+    {
+      "id": "cache_1781971924218_5",
+      "timestamp": 1781971924218,
+      "messages": [
+        {
+          "role": "system",
+          "length": 1009,
+          "hash": "2e27c390"
+        },
+        {
+          "role": "user",
+          "length": 50,
+          "hash": "2509be02"
+        },
+        {
+          "role": "user",
+          "length": 896,
+          "hash": "27b19992"
+        },
+        {
+          "role": "user",
+          "length": 102,
+          "hash": "5d36c904"
+        },
+        {
+          "role": "user",
+          "length": 450,
+          "hash": "93e21705"
+        },
+        {
+          "role": "user",
+          "length": 2869,
+          "hash": "9473d752"
+        },
+        {
+          "role": "user",
+          "length": 86,
+          "hash": "3ef5b321"
+        },
+        {
+          "role": "user",
+          "length": 233,
+          "hash": "b6db9e75"
+        },
+        {
+          "role": "user",
+          "length": 297,
+          "hash": "b7f01fe4"
+        },
+        {
+          "role": "user",
+          "length": 169,
+          "hash": "bcef8a20"
+        },
+        {
+          "role": "user",
+          "length": 294,
+          "hash": "b0010ae8"
+        },
+        {
+          "role": "user",
+          "length": 590,
+          "hash": "d9be343b"
+        },
+        {
+          "role": "user",
+          "length": 223,
+          "hash": "07a6d8b8"
+        },
+        {
+          "role": "user",
+          "length": 407,
+          "hash": "9f868544"
+        },
+        {
+          "role": "user",
+          "length": 718,
+          "hash": "d8a76480"
+        },
+        {
+          "role": "user",
+          "length": 2258,
+          "hash": "6a91049c"
+        },
+        {
+          "role": "user",
+          "length": 900,
+          "hash": "7d291910"
+        },
+        {
+          "role": "user",
+          "length": 142,
+          "hash": "5e11aeef"
+        },
+        {
+          "role": "user",
+          "length": 98,
+          "hash": "0580fbb5"
+        },
+        {
+          "role": "user",
+          "length": 313,
+          "hash": "0be138d1"
+        },
+        {
+          "role": "user",
+          "length": 306,
+          "hash": "c612bf08"
+        },
+        {
+          "role": "user",
+          "length": 124,
+          "hash": "a6276b1c"
+        },
+        {
+          "role": "user",
+          "length": 368,
+          "hash": "46c83085"
+        },
+        {
+          "role": "user",
+          "length": 337,
+          "hash": "3fbdae89"
+        },
+        {
+          "role": "user",
+          "length": 401,
+          "hash": "838e7af6"
+        },
+        {
+          "role": "user",
+          "length": 414,
+          "hash": "cb83d36a"
+        },
+        {
+          "role": "user",
+          "length": 8,
+          "hash": "10cb3c52"
+        },
+        {
+          "role": "user",
+          "length": 3188,
+          "hash": "f7f70f07"
+        },
+        {
+          "role": "user",
+          "length": 162,
+          "hash": "6e815337"
+        },
+        {
+          "role": "user",
+          "length": 6,
+          "hash": "23346191"
+        },
+        {
+          "role": "user",
+          "length": 533,
+          "hash": "fb8441df"
+        },
+        {
+          "role": "user",
+          "length": 667,
+          "hash": "48cb8d2c"
+        },
+        {
+          "role": "user",
+          "length": 1393,
+          "hash": "b0d293c3"
+        },
+        {
+          "role": "user",
+          "length": 7,
+          "hash": "1c123858"
+        },
+        {
+          "role": "user",
+          "length": 133,
+          "hash": "d946869c"
+        },
+        {
+          "role": "user",
+          "length": 184,
+          "hash": "9cb0189b"
+        },
+        {
+          "role": "user",
+          "length": 317,
+          "hash": "e826dfc0"
+        },
+        {
+          "role": "user",
+          "length": 8,
+          "hash": "5a863718"
+        },
+        {
+          "role": "user",
+          "length": 1056,
+          "hash": "a8d5c261"
+        },
+        {
+          "role": "user",
+          "length": 404,
+          "hash": "e063b99b"
+        },
+        {
+          "role": "user",
+          "length": 535,
+          "hash": "dcf598ef"
+        },
+        {
+          "role": "user",
+          "length": 6,
+          "hash": "ba0cdcd4"
+        },
+        {
+          "role": "user",
+          "length": 179,
+          "hash": "3beaaf42"
+        },
+        {
+          "role": "user",
+          "length": 7,
+          "hash": "7a3dfa81"
+        },
+        {
+          "role": "user",
+          "length": 76,
+          "hash": "19fe76c3"
+        },
+        {
+          "role": "user",
+          "length": 20827,
+          "hash": "5be81bd8"
+        },
+        {
+          "role": "user",
+          "length": 290,
+          "hash": "0558ca05"
+        },
+        {
+          "role": "user",
+          "length": 117354,
+          "hash": "e611fdd2"
+        },
+        {
+          "role": "system",
+          "length": 219,
+          "hash": "40d9f91f"
+        },
+        {
+          "role": "assistant",
+          "length": 2118,
+          "hash": "ec69068c"
+        },
+        {
+          "role": "user",
+          "length": 17,
+          "hash": "799bf410"
+        },
+        {
+          "role": "assistant",
+          "length": 1544,
+          "hash": "221a90e7"
+        },
+        {
+          "role": "user",
+          "length": 46,
+          "hash": "a0d57739"
+        },
+        {
+          "role": "user",
+          "length": 15258,
+          "hash": "818eb8b3"
+        },
+        {
+          "role": "user",
+          "length": 14,
+          "hash": "21edfb4c"
+        },
+        {
+          "role": "user",
+          "length": 6,
+          "hash": "2d5cfb87"
+        },
+        {
+          "role": "user",
+          "length": 8,
+          "hash": "c92c6268"
+        },
+        {
+          "role": "user",
+          "length": 46,
+          "hash": "144359e4"
+        },
+        {
+          "role": "user",
+          "length": 187,
+          "hash": "fbd2bc23"
+        },
+        {
+          "role": "user",
+          "length": 783,
+          "hash": "902b84ec"
+        },
+        {
+          "role": "user",
+          "length": 340,
+          "hash": "57a27c20"
+        }
+      ]
+    }
+  ]
+}

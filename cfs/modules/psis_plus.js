@@ -421,7 +421,7 @@ void _r;
 
  function _psisPlusRenderSection() {
   return '<details class="cfs-psis-plus" id="cfs-psisp-root" open>' +
-   '<summary>📐 提示词结构（PSIS Plus v4.9.2）— 检测乱序 + 重排 + 持久化</summary>' +
+   '<summary>📐 提示词结构 PSIS PLUS — 检测乱序 + 重排 + 自动储存到预设（可还原）</summary>' +
    '<div class="cfs-psisp-body" id="cfs-psisp-body">' +
    '<div class="cfs-psisp-hint">点 <b>🔍 检测排序</b> 扫描 chat-completion 预设里被错插到 chatHistory 之后的稳态块</div>' +
    '<div class="cfs-psisp-actions">' +

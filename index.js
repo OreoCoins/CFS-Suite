@@ -55,11 +55,18 @@ import { RSI } from './cfs/modules/rsi.js';
 // Day 11: Full Refresh 改由 scheduler 订阅 MESSAGE_RECEIVED 真按对话轮次触发
 //          （旧 Day 9 内联 applyInjection counter 失效 BUG 的根治）
 import './cfs/core/full_refresh_scheduler.js';
+// 2026-06-21 v6 阶段 E：post_history_pinner.js 已删除
+//   该模块原案在 chat 数组层 splice 把跨轮稳定块前移，但暴力拆 <tag>...</tag> 配对
+//   导致 DS-V4 主请求只输出思维链就中断。PETL 改在 worldbook entry 层重排 position，
+//   依赖 PSIS DYNAMIC_PATTERNS 精确识别，跟模板配对结构无关，从根上替代 pinner。
+// 2026-06-21: v6 PETL · Prompt Entry Takeover Layer
+//   切卡自动接管所有 enabled 含动态宏 entry → at_depth_as_user/depth=0；霸王条款
+import { PETL } from './cfs/core/petl.js';
 // Day 4 附加 UI：右下角浮动胶囊 + 折叠面板（完整 panel.js 留 Day 6）
 import './cfs/ui/floating_capsule.js';
 
 const TAG = '[CFS-Suite]';
-const VERSION = '5.3.0';
+const VERSION = '6.0.0';
 
 console.log(`${TAG} v${VERSION} loading...`);
 
@@ -86,6 +93,8 @@ eventSource.once(event_types.APP_READY, () => {
         PSISPlus: !!PSISPlus,
         // Day 11 — RSI 运行时结构诊断器
         RSI: !!RSI,
+        // 2026-06-21 — v6 PETL 切卡自动接管动态注入 entry（替代 post_history_pinner）
+        PETL: !!PETL,
         // CFSMvuBundle 检查暂时移除（bundle 加载已禁用，等 MVU 路线重审）
         CFS4Version: window.CFS4?.version,
         MvuExists: !!window.Mvu,

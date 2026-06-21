@@ -375,6 +375,8 @@ void _cfsPolyfillReport;
  var isSchema = c.indexOf('[CFS4_SCHEMA|') === 0;
  var isDynamic = c.indexOf('[CFS4_DYNAMIC|') === 0;
  if (!isSchema && !isDynamic) continue;
+ // 2026-06-21 用户决定权：comment 含 [cfs:ignore] 标记 → 永不接管，保留用户手动调整
+ if (c.indexOf('[cfs:ignore]') >= 0) continue;
  cfsCount++;
 
  // hotfix v2.6 (1)：跳过 disabled entry — SCHEMA entry 设计上就是 disable=true（不参 prompt），position 不影响 cache
@@ -485,22 +487,43 @@ void _cfsPolyfillReport;
  } catch (_eReb) { _auditRebuildInFlight = false; }
 
  if (fixes.length > 0) {
+ // 2026-06-21 v6 PETL 回退：audit 恢复自动 setLorebookEntries
+ //   v5.3 改告警模式是过度设计 — audit 只管 [CFS4_*] 自管 entry（line 375-377 已过滤），
+ //   跟用户调整非 CFS entry 不冲突；用户真要保留某条 CFS entry 现状可加 [cfs:ignore]（line 378-379）
+ //   保留 window.CFS4.pendingAuditFixes 镜像 + Coordinator API 作 F12 高级入口
+ if (!_GLOBAL.CFS4) _GLOBAL.CFS4 = {};
+ _GLOBAL.CFS4.pendingAuditFixes = {
+   bookName: bind.primary,
+   fixes: fixes,
+   detectedAt: Date.now(),
+   uids: fixes.map(function (f) { return f.uid; }),
+ };
  try {
  await Promise.resolve(helper.setLorebookEntries(bind.primary, fixes));
- console.warn('[CFS Audit] ✅ 已修正 ' + fixes.length + ' 条 CFS entry 位置 → 写回 worldbook 成功 (uids=' + fixes.map(function (f) { return f.uid; }).join(',') + ')');
+ console.log('[CFS Audit] ✅ 已自动修复 ' + fixes.length + ' 条 CFS 自管 entry 位置漂移 (uids=' + fixes.map(function (f) { return f.uid; }).join(',') + ')');
+ _GLOBAL.CFS4.pendingAuditFixes = null;
+ try {
+ if (typeof toastr !== 'undefined' && typeof toastr.success === 'function') {
+ toastr.success('⚡ CFS audit 已自动修复 ' + fixes.length + ' 条自管 entry 位置漂移', 'CFS-Suite', { timeOut: 5000 });
+ }
+ } catch (_eToast) {}
+ return { applied: fixes.length, uids: fixes.map(function (f) { return f.uid; }) };
+ } catch (eApply) {
+ console.warn('[CFS Audit] ⚠ setLorebookEntries 失败 — 保留 pending 让用户从胶囊面板审判:', eApply);
  try {
  if (typeof eventEmit === 'function') {
- eventEmit('cfs:position:repaired', { count: fixes.length, uids: fixes.map(function (f) { return f.uid; }) });
+ eventEmit('cfs:audit:pending-fixes', _GLOBAL.CFS4.pendingAuditFixes);
  }
  } catch (_e2) {}
- return { fixed: fixes.length, uids: fixes.map(function (f) { return f.uid; }) };
- } catch (eSet) {
- console.error('[CFS Audit] ✗ setLorebookEntries 失败:', eSet);
- return { error: eSet && eSet.message, attempted: fixes.length };
+ return { pending: fixes.length, uids: _GLOBAL.CFS4.pendingAuditFixes.uids, error: eApply && eApply.message };
  }
  } else {
- console.log('[CFS Audit] 位置审计通过，无需修正');
- return { fixed: 0 };
+ console.log('[CFS Audit] 位置审计通过，无漂移');
+ // 清除上次的 pending
+ if (_GLOBAL.CFS4 && _GLOBAL.CFS4.pendingAuditFixes) {
+   _GLOBAL.CFS4.pendingAuditFixes = null;
+ }
+ return { pending: 0 };
  }
  } catch (e) {
  console.error('[CFS Audit] _auditCfsEntries 异常:', e);
@@ -596,7 +619,38 @@ void _cfsPolyfillReport;
  },
  // hotfix v2.3：手动触发 audit（F12 救回入口）
  auditEntries: function (opts) { return _auditTrigger('manual', Object.assign({ force: true }, opts || {})); },
- getAuditState: function () { return { last_run: _auditLastRun, run_count: _auditRunCount, debounce_ms: _auditDebounceMs }; }
+ getAuditState: function () { return { last_run: _auditLastRun, run_count: _auditRunCount, debounce_ms: _auditDebounceMs }; },
+ // 2026-06-21 用户审判 API：UI 拿到 pendingAuditFixes 后让用户勾选要修的 uid，传进来执行实际写
+ getPendingAuditFixes: function () { return CFS4.pendingAuditFixes; },
+ applyPendingAuditFixes: async function (uids) {
+  var pending = CFS4.pendingAuditFixes;
+  if (!pending || !Array.isArray(pending.fixes) || pending.fixes.length === 0) {
+   return { applied: 0, reason: 'no_pending' };
+  }
+  var helper = (typeof TavernHelper !== 'undefined') ? TavernHelper : (_GLOBAL && _GLOBAL.TavernHelper);
+  if (!helper || !helper.setLorebookEntries) return { applied: 0, reason: 'no_helper' };
+  var toApply = (Array.isArray(uids) && uids.length > 0)
+   ? pending.fixes.filter(function (f) { return uids.indexOf(f.uid) >= 0; })
+   : pending.fixes;
+  if (toApply.length === 0) return { applied: 0, reason: 'no_match' };
+  try {
+   await Promise.resolve(helper.setLorebookEntries(pending.bookName, toApply));
+   console.log('[CFS Audit] ✅ 用户审判通过，已修 ' + toApply.length + ' 条 (uids=' + toApply.map(function (f) { return f.uid; }).join(',') + ')');
+   // 清剩余 pending 或全部清
+   var appliedUids = toApply.map(function (f) { return f.uid; });
+   pending.fixes = pending.fixes.filter(function (f) { return appliedUids.indexOf(f.uid) < 0; });
+   if (pending.fixes.length === 0) CFS4.pendingAuditFixes = null;
+   return { applied: toApply.length, remaining: pending ? pending.fixes.length : 0 };
+  } catch (e) {
+   console.error('[CFS Audit] applyPendingAuditFixes 失败:', e);
+   return { applied: 0, error: e && e.message };
+  }
+ },
+ dismissPendingAuditFixes: function () {
+  var n = CFS4.pendingAuditFixes ? CFS4.pendingAuditFixes.fixes.length : 0;
+  CFS4.pendingAuditFixes = null;
+  return { dismissed: n };
+ },
  };
  // 暴露给 SessionGate.probe() 用
  Object.defineProperty(CFS4.Coordinator, '_chatChangedSeen', { get: function () { return _chatChangedSeen; }, configurable: true });

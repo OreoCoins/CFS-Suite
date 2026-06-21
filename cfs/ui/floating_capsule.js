@@ -16,7 +16,7 @@
  */
 
 const TAG = '[CFS-Suite/ui]';
-const VERSION = '5.3.0';
+const VERSION = '6.0.0';
 const LS_POS_KEY = 'cfs-suite/ui/capsule_position_v2';
 // 一次性清理 v1 旧 key：v1 默认右下，部分手机机型不可见；v2 改默认右上
 // 老用户升级后 v2 不存在 → 走新默认 CSS（右上角）→ 不再被 ST #send_form / iOS home indicator 遮住
@@ -233,6 +233,11 @@ function _mountCapsule() {
     let dragStartX = 0, dragStartY = 0;
     let isDragging = false;
     let didMove = false;
+    // 2026-06-21 G: 手机第二次 tap 失效 BUG —— touchend 后浏览器还会合成派发 mousedown/mouseup
+    // 到 capsule + document，二次进入 _onDragStart/_onDragEnd → 再 toggle 一次 → 表现为"打不开"。
+    // 长按时浏览器抑制 mouse 合成 → 只走一次 → 正常开。
+    // 修：touchstart 时打 suppress 时间窗，600ms 内 mouse 事件直接忽略。
+    let _suppressMouseUntil = 0;
 
     function _onDragStart(clientX, clientY) {
         isDragging = true;
@@ -279,26 +284,41 @@ function _mountCapsule() {
         }
     }
 
-    // mouse 套
+    // mouse 套（移动端的合成 mouse 在 _suppressMouseUntil 窗口内直接忽略）
     capsule.addEventListener('mousedown', (e) => {
+        if (Date.now() < _suppressMouseUntil) return;
         e.preventDefault();
         _onDragStart(e.clientX, e.clientY);
     });
-    document.addEventListener('mousemove', (e) => _onDragMove(e.clientX, e.clientY));
-    document.addEventListener('mouseup', _onDragEnd);
+    document.addEventListener('mousemove', (e) => {
+        if (Date.now() < _suppressMouseUntil) return;
+        _onDragMove(e.clientX, e.clientY);
+    });
+    document.addEventListener('mouseup', (e) => {
+        if (Date.now() < _suppressMouseUntil) return;
+        _onDragEnd();
+    });
 
     // touch 套（passive:true 不阻 click 派发；touch-action:none 已防滚动）
     capsule.addEventListener('touchstart', (e) => {
         if (e.touches.length !== 1) return;
+        _suppressMouseUntil = Date.now() + 600;
         _onDragStart(e.touches[0].clientX, e.touches[0].clientY);
     }, { passive: true });
     document.addEventListener('touchmove', (e) => {
         if (!isDragging || e.touches.length !== 1) return;
         e.preventDefault(); // 拖动中阻止页面滚动
+        _suppressMouseUntil = Date.now() + 600;
         _onDragMove(e.touches[0].clientX, e.touches[0].clientY);
     }, { passive: false });
-    document.addEventListener('touchend', _onDragEnd);
-    document.addEventListener('touchcancel', _onDragEnd);
+    document.addEventListener('touchend', () => {
+        _suppressMouseUntil = Date.now() + 600;
+        _onDragEnd();
+    });
+    document.addEventListener('touchcancel', () => {
+        _suppressMouseUntil = Date.now() + 600;
+        _onDragEnd();
+    });
 
     // 点面板外关闭
     document.addEventListener('click', (e) => {
@@ -467,7 +487,15 @@ function _escapeHtml(s) {
 // ===== Day 8: CFS-MVU 走酒馆助手脚本路径（不再做 ST 原生扩展） =====
 const CFS_MVU_GITHUB_URL = 'https://github.com/OreoCoins/CFS-MVU';
 const CFS_MVU_SCRIPT_JSON_URL = 'https://raw.githubusercontent.com/OreoCoins/CFS-MVU/main/artifact/cfs-mvu-tavern-helper-script.json';
-const _cfsMvuStatus = { installed: null, version: null, lastCheckedAt: 0 };
+const _cfsMvuStatus = {
+    installed: null,
+    version: null,
+    lastCheckedAt: 0,
+    // 2026-06-21 v6 阶段 F：MVU 来源诊断
+    sources: [],          // [{type, name, id?, where}]
+    sourcesScannedAt: 0,
+    sourcesScanError: null,
+};
 
 // ===== Day 9: Full Refresh 长期记忆锚点配置 =====
 const LS_FULL_REFRESH_INTERVAL = 'cfs-suite/full_refresh_interval';
@@ -593,6 +621,22 @@ function _refreshCfsMvuStatus(panel) {
     _cfsMvuStatus.installed = _detectCfsMvuInstalled();
     _cfsMvuStatus.version = window.Mvu?._cfsEdition?.version ?? null;
     _cfsMvuStatus.lastCheckedAt = Date.now();
+    // 2026-06-21 v6 阶段 F：非套餐版时异步扫来源
+    if (!_cfsMvuStatus.installed && typeof window.Mvu?.getMvuData === 'function') {
+        _scanOtherMvuSources().then((r) => {
+            _cfsMvuStatus.sources = r.sources;
+            _cfsMvuStatus.sourcesScannedAt = Date.now();
+            _cfsMvuStatus.sourcesScanError = r.scanError;
+            const el2 = panel?.querySelector?.('.mvu-status-line');
+            if (el2) el2.innerHTML = _renderMvuStatusLine();
+        }).catch((e) => {
+            _cfsMvuStatus.sourcesScanError = e?.message ?? String(e);
+        });
+    } else {
+        _cfsMvuStatus.sources = [];
+        _cfsMvuStatus.sourcesScannedAt = 0;
+        _cfsMvuStatus.sourcesScanError = null;
+    }
     const el = panel?.querySelector?.('.mvu-status-line');
     if (el) el.innerHTML = _renderMvuStatusLine();
 }
@@ -602,7 +646,24 @@ function _renderMvuStatusLine() {
         return `<span class="v ok">✓ CFS-MVU 已生效 (v${_cfsMvuStatus.version})</span>`;
     }
     if (typeof window.Mvu?.getMvuData === 'function') {
-        return '<span class="v warn">⚠️ Mvu 存在但非 CFS-MVU 套餐版（建议换装）</span>';
+        let html = '<span class="v warn">⚠️ Mvu 存在但非 CFS-MVU 套餐版</span>';
+        const ss = _cfsMvuStatus.sources;
+        if (Array.isArray(ss) && ss.length > 0) {
+            const items = ss.slice(0, 6).map(s =>
+                `<li>[${_escapeHtml(s.type)}] <b>${_escapeHtml(s.name)}</b></li>`
+            ).join('');
+            const more = ss.length > 6 ? `<li>… 共 ${ss.length} 条</li>` : '';
+            html += `<ul style="margin:4px 0 2px 16px;padding:0;font-size:11px;line-height:1.4">${items}${more}</ul>`;
+        } else if (_cfsMvuStatus.sourcesScannedAt > 0) {
+            html += `<div style="font-size:11px;color:#999;margin-top:2px">未识别 MVU 注册来源 · 点 <b>🔍 F12 诊断</b> 自助查</div>`;
+        } else {
+            html += `<div style="font-size:11px;color:#999;margin-top:2px">来源扫描中…</div>`;
+        }
+        if (_cfsMvuStatus.sourcesScanError) {
+            html += `<div style="font-size:10px;color:#c00">⚠ 部分扫描失败: ${_escapeHtml(_cfsMvuStatus.sourcesScanError)}</div>`;
+        }
+        html += `<div style="font-size:10px;color:#999;margin-top:2px">注：CFS-Suite v6 不带 MVU bundle，需酒馆助手装套餐版脚本</div>`;
+        return html;
     }
     return '<span class="v err">✗ 未装 CFS-MVU（点下方按钮看引导）</span>';
 }
@@ -661,80 +722,309 @@ function _flattenScriptTrees(trees) {
     return out;
 }
 
-async function _scanAndDisableOtherMvu(panel) {
-    // 酒馆助手把 getScriptTrees / updateScriptTreesWith 仅暴露给 iframe 内脚本，
-    // 主页面 window.TavernHelper 不包含这些方法。
-    // 优先用 TavernHelper 直接挂的 namespace（若存在），否则降级到引导手动禁
+// ===== 2026-06-21 v6 阶段 F：MVU 注册者深度扫描 + 诊断 =====
+// 用户反馈：点「扫描禁用其他 MVU」下方显示「未发现」，但顶部仍报「Mvu 存在但非套餐版」
+// 根因：旧 isMvuScript 只看 script.name 匹配 MVU/MagVar/变量框架 6 个关键字
+//   → 卡作者把脚本命名「道渊数据 / 角色状态管理 / 游戏化系统 / AutoCard」时一律漏扫
+// 修：① 扫描判定加 content 关键字（不依赖名字）
+//      ② 扩 source 面 ── 加上角色卡 regex_scripts + character_book.entries content
+//      ③ 抽 _scanOtherMvuSources 纯查询版给状态行用
+//      ④ _diagnoseMvuRegistrant 给用户 F12 自助查
+const _MVU_CONTENT_MARKERS = [
+    /\bwindow\s*\.\s*Mvu\b/,
+    /\bglobalThis\s*\.\s*Mvu\b/,
+    /\bMvu\s*\.\s*(init|replaceMvuData|parseMessage|setMvuData|getMvuData|loadMvu|initMvu)\b/,
+    /\bMvu\s*=\s*[\{\(\[]/,
+    /['"]@(magicalastrogy\/)?magvarupdate['"]/i,
+    /\bMagVarUpdate\b/,
+    /\bstat_data\s*[:=]/,           // MVU 核心字段
+    /\bupdate_variables\s*\(/,      // MVU 核心 API
+];
+function _isMvuByContent(s) {
+    if (typeof s !== 'string' || s.length === 0) return false;
+    for (let i = 0; i < _MVU_CONTENT_MARKERS.length; i++) {
+        try { if (_MVU_CONTENT_MARKERS[i].test(s)) return true; } catch (e) {}
+    }
+    return false;
+}
+function _isCfsMvuByName(n) {
+    return /cfs[-_ ]?mvu|cfs[-_ ]?suite/i.test(n || '');
+}
+function _isMvuScriptDeep(s) {
+    if (_isCfsMvuByName(s.name || '')) return false;
+    const name = (s.name || '').toLowerCase();
+    if (/mvu|magvar|变量框架|variable.?framework/i.test(name)) return true;
+    if (_isMvuByContent(s.content || '')) return true;
+    return false;
+}
+
+async function _scanOtherMvuSources() {
+    const sources = [];
+    const errs = [];
+
+    // ① 酒馆助手脚本（global / character / preset）—— 名字 OR content 命中
     const TH = window.TavernHelper;
     const getTrees = TH?.getScriptTrees ?? window.getScriptTrees;
-    const updateTreesWith = TH?.updateScriptTreesWith ?? window.updateScriptTreesWith;
-    if (typeof getTrees !== 'function' || typeof updateTreesWith !== 'function') {
-        _pushLog(panel, '⚠️ 酒馆助手 API 不在 ST 主页面暴露（只在 iframe 内可用）', 'warn');
-        _pushLog(panel, '  ↳ 请手动操作：扩展面板 → 酒馆助手 → 脚本管理', 'info');
-        _pushLog(panel, '  ↳ 找含「MVU/MagVar/变量框架」名字的脚本（排除 CFS-MVU）', 'info');
-        _pushLog(panel, '  ↳ 点关闭按钮禁用，F5 ST 后生效', 'info');
-        return;
-    }
-    _pushLog(panel, '🔍 扫描酒馆助手脚本（global + character + preset）…', 'info');
-
-    const isMvuScript = (s) => {
-        const name = (s.name || '').toLowerCase();
-        const isMvu = /mvu|magvar|变量框架|variable.?framework/i.test(name);
-        const isCfsMvu = /cfs[-_ ]?mvu|cfs[-_ ]?suite/i.test(name);
-        return isMvu && !isCfsMvu;
-    };
-
-    const types = ['global', 'character', 'preset'];
-    const allTargets = [];
-    for (const t of types) {
-        try {
-            const trees = await getTrees({ type: t });
-            const scripts = _flattenScriptTrees(trees);
-            const targets = scripts.filter(s => isMvuScript(s) && s.enabled !== false);
-            if (targets.length > 0) {
-                allTargets.push({ type: t, targets });
-                _pushLog(panel, `  ↳ ${t}: 找到 ${targets.length} 个`, 'info');
+    if (typeof getTrees === 'function') {
+        const types = ['global', 'character', 'preset'];
+        for (let i = 0; i < types.length; i++) {
+            const t = types[i];
+            try {
+                const trees = await getTrees({ type: t });
+                const scripts = _flattenScriptTrees(trees);
+                for (const s of scripts) {
+                    if (s.enabled === false) continue;
+                    if (_isMvuScriptDeep(s)) {
+                        sources.push({ type: 'tavern_helper:' + t, name: s.name || '(无名)', id: s.id, where: t });
+                    }
+                }
+            } catch (e) {
+                errs.push(`tavern_helper:${t}: ${e?.message ?? e}`);
             }
-        } catch (e) {
-            _pushLog(panel, `  ↳ ${t} 扫描失败: ${e?.message ?? e}`, 'warn');
         }
+    } else {
+        errs.push('TavernHelper.getScriptTrees 不在主页面暴露（iframe-only）');
     }
 
-    if (allTargets.length === 0) {
-        _pushLog(panel, '✅ 未发现其他启用的 MVU 脚本，无需禁用', 'success');
+    // ② 当前角色卡 regex_scripts（伪扩展 ── iframe 沙箱跑代码）+ character_book entries content
+    try {
+        const ctx = (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) ? SillyTavern.getContext() : null;
+        const charId = ctx?.characterId;
+        const char = (typeof charId === 'number' && Array.isArray(ctx?.characters)) ? ctx.characters[charId] : null;
+        const charData = char?.data;
+        const regexScripts = charData?.extensions?.regex_scripts;
+        if (Array.isArray(regexScripts)) {
+            for (const r of regexScripts) {
+                if (r.disabled === true) continue;
+                const haystack = (r.replaceString || '') + ' ' + (r.scriptName || '');
+                if (_isMvuByContent(haystack) || /\bmvu\b|\bmagvar\b/i.test(r.scriptName || '')) {
+                    sources.push({ type: 'char:regex_script', name: r.scriptName || '(无名 regex)', where: 'card.regex_scripts' });
+                }
+            }
+        }
+        const cbEntries = charData?.character_book?.entries;
+        if (Array.isArray(cbEntries)) {
+            for (const e of cbEntries) {
+                if (e.enabled === false) continue;
+                const haystack = (e.content || '') + ' ' + (e.comment || '');
+                if (_isMvuByContent(haystack)) {
+                    sources.push({ type: 'char:character_book', name: e.comment || '(无 comment)', where: 'card.character_book' });
+                }
+            }
+        }
+    } catch (e) {
+        errs.push(`char_card: ${e?.message ?? e}`);
+    }
+
+    // ③ ST 原生扩展层（third-party 目录）—— 用户在酒馆助手脚本管理看不到的来源
+    //   关键场景：反馈用户主页面 window.Mvu = 11 keys（=上游 MagVarUpdate 的 createMvu）
+    //   既不在酒馆助手脚本，也不在角色卡内嵌，剩下唯一可能就是 ST 第三方扩展
+    //   ST API: GET /api/extensions/discover 返回 [{name, type}]
+    //   禁用: extension_settings.disabledExtensions.push(name) + saveSettings()
+    try {
+        const headers = (typeof window.getRequestHeaders === 'function')
+            ? window.getRequestHeaders() : { 'Content-Type': 'application/json' };
+        const resp = await fetch('/api/extensions/discover', { method: 'GET', headers });
+        if (resp.ok) {
+            const exts = await resp.json();
+            if (Array.isArray(exts)) {
+                // 已 disabled 的不算（防止重复显示给用户）
+                const ctx = (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) ? SillyTavern.getContext() : null;
+                const extSettings = ctx?.extensionSettings ?? (typeof window.extension_settings !== 'undefined' ? window.extension_settings : null);
+                const disabledList = Array.isArray(extSettings?.disabledExtensions) ? extSettings.disabledExtensions : [];
+                for (const e of exts) {
+                    const name = (typeof e === 'string') ? e : (e?.name || '');
+                    if (!name) continue;
+                    // 跳过 CFS 自己 + 已禁用
+                    if (_isCfsMvuByName(name)) continue;
+                    if (disabledList.includes(name)) continue;
+                    if (/mvu|magvar|变量框架|variable.?framework/i.test(name)) {
+                        sources.push({
+                            type: 'st:extension',
+                            name: name.replace(/^third-party\//, ''),
+                            id: name,                                  // 完整 internalName，禁用 API 用这个
+                            where: e?.type === 'system' ? 'ST 内置扩展' : 'ST 第三方扩展',
+                            __stExt: true,                             // 标记给禁用流程
+                        });
+                    }
+                }
+            }
+        } else {
+            errs.push('st_extensions: /api/extensions/discover ' + resp.status);
+        }
+    } catch (e) {
+        errs.push('st_extensions: ' + (e?.message ?? e));
+    }
+
+    return { sources, scanError: errs.length ? errs.join(' | ') : null };
+}
+
+// 2026-06-21 v6 阶段 F+：禁用 ST 原生扩展（用 ST 内部 extension_settings.disabledExtensions API）
+async function _disableSTExtension(internalName) {
+    const ctx = (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) ? SillyTavern.getContext() : null;
+    const extSettings = ctx?.extensionSettings ?? (typeof window.extension_settings !== 'undefined' ? window.extension_settings : null);
+    if (!extSettings || !Array.isArray(extSettings.disabledExtensions)) {
+        throw new Error('extension_settings.disabledExtensions 不可用（ST 版本不兼容?）');
+    }
+    if (!extSettings.disabledExtensions.includes(internalName)) {
+        extSettings.disabledExtensions.push(internalName);
+    }
+    // 保存
+    if (ctx && typeof ctx.saveSettingsDebounced === 'function') {
+        ctx.saveSettingsDebounced();
+    } else if (typeof window.saveSettingsDebounced === 'function') {
+        window.saveSettingsDebounced();
+    } else if (typeof window.saveSettings === 'function') {
+        await window.saveSettings();
+    } else {
+        throw new Error('saveSettings/saveSettingsDebounced 不可用');
+    }
+    return true;
+}
+
+function _diagnoseMvuRegistrant() {
+    console.group('[CFS-Suite] 🔍 MVU 注册者诊断 dump');
+    try {
+        console.log('window.Mvu exists?', !!window.Mvu);
+        if (window.Mvu) {
+            console.log('Object.keys(window.Mvu):', Object.keys(window.Mvu));
+            console.log('window.Mvu._cfsEdition:', window.Mvu._cfsEdition);
+            console.log('window.Mvu.version:', window.Mvu.version);
+            console.log('window.Mvu.constructor?.name:', window.Mvu.constructor?.name);
+            const fnKeys = Object.keys(window.Mvu).filter(k => typeof window.Mvu[k] === 'function');
+            console.log('functions:', fnKeys);
+            for (let i = 0; i < Math.min(5, fnKeys.length); i++) {
+                const fk = fnKeys[i];
+                try { console.log(`  ${fk}.toString() (slice 200):`, String(window.Mvu[fk]).slice(0, 200)); } catch (e) {}
+            }
+        }
+        console.log('CFS-Suite v6: 本身不带 MVU bundle（index.js v6.0.0 注释 line 33）');
+        console.log('当前 _cfsMvuStatus snapshot:', JSON.parse(JSON.stringify({ ..._cfsMvuStatus })));
+        console.log('提示：复制以上 dump 粘贴到 issue / DC，定位 Mvu 注册源。');
+    } catch (e) {
+        console.warn('诊断 dump 异常:', e);
+    }
+    console.groupEnd();
+}
+if (typeof window !== 'undefined') {
+    window.CFS4 = window.CFS4 || {};
+    window.CFS4.diagnoseMvuRegistrant = _diagnoseMvuRegistrant;
+}
+
+async function _scanAndDisableOtherMvu(panel) {
+    // 2026-06-21 v6 阶段 F+：一次性深度扫所有可能来源 + 自动禁用
+    //   ① 酒馆助手脚本 (global/character/preset)        — TavernHelper.updateScriptTreesWith 禁用
+    //   ② ST 第三方/系统扩展                            — extension_settings.disabledExtensions.push 禁用 [新增]
+    //   ③ 角色卡 regex_scripts / character_book entries — 只能告知用户手动改（CFS 无写入 API）
+    _pushLog(panel, '🔍 全方位扫描 MVU 注册者（酒馆助手 + ST 扩展 + 角色卡）…', 'info');
+
+    const r = await _scanOtherMvuSources();
+    if (r.scanError) _pushLog(panel, '⚠ 扫描部分失败: ' + r.scanError, 'warn');
+
+    const all = r.sources || [];
+    if (all.length === 0) {
+        _pushLog(panel, '✅ 全方位扫描未发现非 CFS-MVU 来源', 'success');
+        _pushLog(panel, '  ↳ 如仍报"Mvu 存在但非套餐版" — 点 🔍 F12 诊断按钮，把 console dump 发我们排查', 'info');
         return;
     }
 
-    const allNames = allTargets.flatMap(g => g.targets.map(s => `[${g.type}] 「${s.name}」`)).join('\n');
-    const total = allTargets.reduce((sum, g) => sum + g.targets.length, 0);
-    if (!confirm(`找到 ${total} 个启用的非 CFS-MVU 脚本：\n${allNames}\n\n确定禁用？（仅运行时禁用，不删脚本）`)) {
+    // 分类
+    const thScripts = all.filter(s => s.type && s.type.startsWith('tavern_helper:'));
+    const stExts = all.filter(s => s.type === 'st:extension');
+    const cardSrcs = all.filter(s => s.type === 'char:regex_script' || s.type === 'char:character_book');
+
+    // 显示扫描结果
+    if (thScripts.length > 0) {
+        _pushLog(panel, `📜 酒馆助手脚本: ${thScripts.length} 个`, 'info');
+        for (const s of thScripts) _pushLog(panel, `  · [${s.type}] ${s.name}`, 'info');
+    }
+    if (stExts.length > 0) {
+        _pushLog(panel, `🔌 ST 第三方/系统扩展: ${stExts.length} 个`, 'info');
+        for (const s of stExts) _pushLog(panel, `  · [${s.where}] ${s.name} (id=${s.id})`, 'info');
+    }
+    if (cardSrcs.length > 0) {
+        _pushLog(panel, `📇 角色卡内嵌 (CFS 无法自动禁用): ${cardSrcs.length} 个`, 'warn');
+        for (const s of cardSrcs) _pushLog(panel, `  · [${s.type}] ${s.name}`, 'warn');
+    }
+
+    const autoCount = thScripts.length + stExts.length;
+    if (autoCount === 0) {
+        _pushLog(panel, '⚠️ 全部来源在角色卡内嵌，CFS 无 API 写入 — 请到角色卡编辑器手动改 regex_scripts / character_book', 'warn');
+        return;
+    }
+
+    const summary = []
+        .concat(thScripts.map(s => `[酒馆助手:${s.type.split(':')[1]}] ${s.name}`))
+        .concat(stExts.map(s => `[ST 扩展] ${s.name}`))
+        .join('\n');
+    if (!confirm(`将禁用 ${autoCount} 项非 CFS-MVU 来源：\n${summary}\n${cardSrcs.length > 0 ? `\n（另有 ${cardSrcs.length} 项角色卡内嵌来源 CFS 无法自动处理）\n` : ''}\n确定禁用？（运行时禁用，不删脚本/扩展。完成后会自动 F5 重启）`)) {
         _pushLog(panel, '⏸ 用户取消', 'warn');
         return;
     }
 
     let disabled = 0;
-    for (const { type, targets } of allTargets) {
-        const ids = new Set(targets.map(s => s.id));
-        try {
-            await updateTreesWith((trees) => {
-                const updater = (nodes) => nodes.map(n => {
-                    if (n.type === 'script' && ids.has(n.id)) {
-                        return { ...n, enabled: false };
-                    }
-                    if (n.type === 'folder' && Array.isArray(n.scripts)) {
-                        return { ...n, scripts: updater(n.scripts) };
-                    }
-                    return n;
-                });
-                return updater(trees);
-            }, { type });
-            disabled += targets.length;
-            for (const s of targets) _pushLog(panel, `  ↳ ✓ [${type}] ${s.name}`, 'success');
-        } catch (e) {
-            _pushLog(panel, `  ↳ ✗ ${type} 写回失败: ${e?.message ?? e}`, 'error');
+
+    // ① 禁用酒馆助手脚本
+    if (thScripts.length > 0) {
+        const TH = window.TavernHelper;
+        const updateTreesWith = TH?.updateScriptTreesWith ?? window.updateScriptTreesWith;
+        if (typeof updateTreesWith === 'function') {
+            const byType = {};
+            for (const s of thScripts) {
+                const t = s.type.split(':')[1];
+                if (!byType[t]) byType[t] = [];
+                byType[t].push(s);
+            }
+            for (const t of Object.keys(byType)) {
+                const ids = new Set(byType[t].map(s => s.id));
+                try {
+                    await updateTreesWith((trees) => {
+                        const updater = (nodes) => nodes.map(n => {
+                            if (n.type === 'script' && ids.has(n.id)) return { ...n, enabled: false };
+                            if (n.type === 'folder' && Array.isArray(n.scripts)) return { ...n, scripts: updater(n.scripts) };
+                            return n;
+                        });
+                        return updater(trees);
+                    }, { type: t });
+                    disabled += byType[t].length;
+                    for (const s of byType[t]) _pushLog(panel, `  ↳ ✓ [酒馆助手:${t}] ${s.name}`, 'success');
+                } catch (e) {
+                    _pushLog(panel, `  ↳ ✗ 酒馆助手 ${t} 禁用失败: ${e?.message ?? e}`, 'error');
+                }
+            }
+        } else {
+            _pushLog(panel, '⚠️ TavernHelper.updateScriptTreesWith 不可用 — 酒馆助手脚本无法自动禁用，请去脚本管理手动改', 'warn');
         }
     }
-    _pushLog(panel, `🚫 完成：禁用 ${disabled}/${total} 个 MVU 脚本（F5 生效）`, 'success');
+
+    // ② 禁用 ST 第三方/系统扩展（这就是反馈用户的痛点 — 11 keys 上游 MagVarUpdate 来源）
+    if (stExts.length > 0) {
+        for (const s of stExts) {
+            try {
+                await _disableSTExtension(s.id);
+                _pushLog(panel, `  ↳ ✓ [ST 扩展] ${s.name} 已加入 disabledExtensions`, 'success');
+                disabled++;
+            } catch (e) {
+                _pushLog(panel, `  ↳ ✗ [ST 扩展] ${s.name} 禁用失败: ${e?.message ?? e}`, 'error');
+                _pushLog(panel, `      手动方式: ST 扩展面板 → 找「${s.name}」点关闭`, 'info');
+            }
+        }
+    }
+
+    if (disabled === 0) {
+        _pushLog(panel, '⚠️ 没有任何来源被禁用', 'warn');
+        return;
+    }
+
+    _pushLog(panel, `🚫 完成：禁用 ${disabled}/${autoCount} 项 — 3 秒后自动 F5 让生效（按住 Esc 阻止）…`, 'success');
+    // 给用户 3s 看完日志再自动刷新
+    let _aborted = false;
+    const _onEsc = (ev) => { if (ev.key === 'Escape') { _aborted = true; _pushLog(panel, '⏸ 用户按 Esc，取消自动 F5（手动刷新生效）', 'warn'); document.removeEventListener('keydown', _onEsc); } };
+    document.addEventListener('keydown', _onEsc);
+    setTimeout(() => {
+        document.removeEventListener('keydown', _onEsc);
+        if (!_aborted) location.reload();
+    }, 3000);
 }
 
 function _renderPanel(panel) {
@@ -798,6 +1088,10 @@ function _renderPanel(panel) {
     html += `<summary style="${mvuSummaryColor};cursor:pointer;font-size:11px;padding:4px 0">🧬 MVU 套餐 — <b>${mvuSummaryIcon}</b></summary>`;
     html += '<div style="padding-top:6px">';
     html += '<div class="row"><span class="k">CFS-MVU 扩展</span><span class="mvu-status-line">' + _renderMvuStatusLine() + '</span></div>';
+    // 2026-06-21 v6 阶段 F：MVU F12 诊断入口
+    html += '<div class="row" style="justify-content:flex-end;margin-top:4px">';
+    html += '<button id="cfs-act-diag-mvu" class="" style="padding:3px 10px;font-size:10px;width:auto;margin:0" title="dump window.Mvu 元信息到 F12 console，定位 MVU 注册者">🔍 F12 诊断 Mvu 来源</button>';
+    html += '</div>';
     html += '</div></details>';
     html += '</div>';
 
@@ -963,7 +1257,7 @@ function _renderPanel(panel) {
                 catch (eP) { console.warn('[CFS-Suite] PSIS+ bindEvents 失败', eP); }
             }
         } else if (psisPlusMount) {
-            psisPlusMount.innerHTML = '<div style="color:#e88;padding:8px">⚠️ CFS4.PSISPlus 未挂，看 F12 [CFS v4.9.3 PSIS Plus] 启动日志</div>';
+            psisPlusMount.innerHTML = '<div style="color:#e88;padding:8px">⚠️ CFS4.PSISPlus 未挂，看 F12 [CFS V4.9.3 功能] 启动日志</div>';
         }
     } catch (eP) { console.warn('[CFS-Suite] 挂 PSIS+ section 失败', eP); }
 
@@ -977,7 +1271,7 @@ function _renderPanel(panel) {
                 catch (eS) { console.warn('[CFS-Suite] SEM bindEvents 失败', eS); }
             }
         } else if (semMount) {
-            semMount.innerHTML = '<div style="color:#e88;padding:8px">⚠️ CFS4.SEM 未挂，看 F12 [CFS v4.9.1 SEM] 启动日志</div>';
+            semMount.innerHTML = '<div style="color:#e88;padding:8px">⚠️ CFS4.SEM 未挂，看 F12 [CFS V4.9.3 功能] 启动日志</div>';
         }
     } catch (eS) { console.warn('[CFS-Suite] 挂 SEM section 失败', eS); }
 
@@ -1094,6 +1388,11 @@ function _renderPanel(panel) {
     panel.querySelector('#cfs-act-install-mvu')?.addEventListener('click', () => _installCfsMvu(panel));
     panel.querySelector('#cfs-act-copy-mvu-url')?.addEventListener('click', () => _copyCfsMvuUrl(panel));
     panel.querySelector('#cfs-act-scan-mvu')?.addEventListener('click', () => _scanAndDisableOtherMvu(panel));
+    // 2026-06-21 v6 阶段 F：F12 诊断按钮
+    panel.querySelector('#cfs-act-diag-mvu')?.addEventListener('click', () => {
+        _diagnoseMvuRegistrant();
+        _pushLog(panel, '🔍 已 dump window.Mvu 元信息到 F12 console（按 F12 看）', 'info');
+    });
 
     // Day 11: 长期记忆策略 — 三档预设按钮
     panel.querySelectorAll('.cfs-ltm-preset-btn').forEach(btn => {

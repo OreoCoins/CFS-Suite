@@ -153,6 +153,8 @@ void _r;
     if (e.disable === true || e.enabled === false) continue;
     var comment = (typeof e.comment === 'string') ? e.comment : '';
     if (comment.indexOf('[CFS4_') === 0) continue;
+    // 2026-06-21 用户决定权：[cfs:ignore] 标记的条目不进 SEM 候选
+    if (comment.indexOf('[cfs:ignore]') >= 0) continue;
     var content = e.content || '';
     if (content.length < SEM_CONFIG.MIN_LEN) continue;
     if (!_semIsAtDepthPos(e.position)) continue;
@@ -444,7 +446,7 @@ void _r;
 
  function _semRenderSection() {
   return '<details class="cfs-sem" id="cfs-sem-root" open>' +
-   '<summary>📦 世界书优化（SEM v2.9）— 候选扫描 + 迁移 + 回滚</summary>' +
+   '<summary>📦 世界书优化 SEM — 候选扫描 + 迁移 + 回滚</summary>' +
    '<div class="cfs-sem-body" id="cfs-sem-body">' +
    '<div class="cfs-sem-hint">点 <b>🔍 扫描候选</b> 查找可迁到 prefix 区的稳态 entry，命中率有望提升</div>' +
    '<div class="cfs-sem-actions">' +
