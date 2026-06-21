@@ -21,7 +21,7 @@
 //   好处：node 烟测可直接 mock 全局 import 不炸（参考 rsi.js / post_history_pinner.js 模式）
 
 const TAG = '[CFS-Suite/petl]';
-const VERSION = '6.0.0';
+const VERSION = '6.1.0';
 const LS_TOGGLE = 'cfs-suite/petl_auto_takeover';
 const LS_HISTORY = 'cfs-suite/petl_history_v1';
 const PETL_BOOTSTRAP_DELAY_MS = 5000;

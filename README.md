@@ -3,7 +3,7 @@
 > **Cache-Friendly Scanner 套餐版** —— SillyTavern 原生扩展。
 > CFS V4.9.3 完整接管层 + 浮动胶囊 6.0 UI,**装一个 = 装两个**(CFS 接管层 + CFS-MVU 套餐版酒馆助手脚本)。
 >
-> 当前版本:`v6.0.0` — PETL 切卡自动接管 + PathRegistry 霸王切卡 + MVU 来源深度扫描
+> 当前版本:`v6.1.0` — PETL 浮动胶囊 UI 实装 + CFS-MVU 卡 MVU 接管 + SCHEMA VIOLATION 守护降级 + autoRegister 退避就绪重试
 
 ---
 
@@ -21,6 +21,46 @@ CFS Suite 是**霸王扩展**:
 - 接管仅在运行时,不删用户磁盘上的卡 / 扩展文件
 
 **如不接受这些规则,请装 [CFS Solo](https://github.com/OreoCoins/CFS-SillyTavern)**(单脚本版,不接管,仅 cache 优化)。
+
+---
+
+## 📋 v6.1.0 主要改动(v6.0 → v6.1)
+
+### 实装 PETL 浮动胶囊 UI 入口(v6.0 只挂内核,UI 缺位)
+
+`cfs/ui/floating_capsule.js` 新增 PETL section,**实装**前一版承诺但未做完的 UI:
+
+- **状态行**:ON/OFF 高亮 + 历史接管总数(条数 / 次数)
+- **最近一次接管摘要**:多久前 / 多少条 / 哪些 worldbook / 触发源(bootstrap / chat_id_changed / manual)
+- **折叠详情**:前 5 条 entry 的 `uid` + 原 `position` + 截断 `comment`
+- **5 个操作按钮**:
+  - **▶ 开启 / ⏸ 关闭自动扫**(动态切换 LS toggle)
+  - **⚡ 立即扫并接管**(`PETL.runNow()`)
+  - **🔬 预演**(`PETL.scanDryRun()` 列候选不写回)
+  - **↩ 撤销最近一次**(`PETL.rollbackLast()` 还原 position/depth)
+  - **🗑 清空历史**(撤销将不可用)
+- 文案钉死霸王规则:豁免 = **用户在世界书条目名称上加 `[cfs:ignore]`**
+
+### CFS-MVU 套餐版深度集成(配套 cfs-mvu/ bundle 升 v5.1.0-2026-06-21)
+
+CFS-MVU 三项改动(在 `_cfs_v5_prep/CFS-MVU` 同步推);CFS-Suite 这边的协议接入:
+
+| # | 改动 | 路径 |
+|---|---|---|
+| **#7** | 霸王禁卡自带 MVU 框架(`MagVarUpdate` import) + **保留 Zod schema 脚本**(`registerMvuSchema / mvu_zod`)作 `mag_command_parsed_for_zod` 扩展性接管点 | `src/function/exclusive_mode.ts` |
+| **#8** | `update_variables.ts` 三处 `SCHEMA VIOLATION` 守护降级为 `[CFS-MVU/schema-relax] warn` + 放行 `_.set` — 跨卡通杀 `z.record` 扩展性(如《虞淑婉》登场角色 `alt_greet_3` insert 樊雪芍) | `src/function/update_variables.ts:957/967/976` |
+| **#9** | 首次接管该卡时弹 warning Toast 提示「请 F5 刷新一次酒馆」,LS 标记 `cfs_mvu/first_takeover_seen/<characterId>` 每卡只弹一次 | `src/function/exclusive_mode.ts` |
+
+### autoRegister 退避就绪重试(防御层)
+
+`cfs/core/path_registry.js` `_onChatChanged` 切卡后原本只 1000ms 单发 `autoRegisterFromStatData` → 卡自带 MVU(网络 import MagVarUpdate@beta + Zod schema 注册 + 首条消息处理)1s 内未就绪扑空 → registry 永远空 → 用户被迫「清空 path + F5」。改为 **退避轮询 `Mvu.getMvuData()` 等 `stat_data` 就绪再 autoRegister**(退避表 `[1000,2000,4000,8000,15000,30000]` 累计 ~60s,与 `v4_bootstrap` Mvu timeout 对齐)。
+
+### 文案 / 版本号统一(本轮)
+
+- 胶囊展开标题:`6.0.0` → **`6.1.0`**
+- PETL section 文案:豁免说明改为「古法 — 用户在世界书条目名称上加 `[cfs:ignore]`」
+- CFS-MVU `_cfsEdition`:`v5.0.0-day4b` → **`v5.1.0-2026-06-21`**(features 新增 `card_mvu_disable / schema_relax / first_takeover_hint`)
+- `cfs-mvu/version.json`:同步升 `cfs_mvu_version: 5.1.0-2026-06-21`
 
 ---
 

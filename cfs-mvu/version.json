@@ -1,21 +1,23 @@
 {
-    "cfs_mvu_version": "5.0.0-day6-fix",
-    "cfs_mvu_commit": "3c61e59",
+    "cfs_mvu_version": "5.1.0-2026-06-21",
+    "cfs_mvu_commit": "local-2026-06-21",
     "upstream_repo": "MagicalAstrogy/MagVarUpdate",
     "upstream_base_commit": "c1ae3a921bdab2e33b1afc745e5474b9b07fc070",
     "upstream_base_commit_short": "c1ae3a9",
     "upstream_base_date": "2026-04-25",
-    "built_at": "2026-06-19",
-    "changes_summary": "Day 2 (#1-3) DS4 + schema + parser; Day 4b (#4-6) cfs_hooks + exclusive_mode + _cfsEdition; Day 6 hotfix saveChatDebounced lazy",
-    "bundle_size_bytes": 143636,
-    "baseline_size_bytes": 137143,
+    "built_at": "2026-06-21",
+    "changes_summary": "Day 2 (#1-3) DS4 + schema + parser; Day 4b (#4-6) cfs_hooks + exclusive_mode + _cfsEdition; Day 6 hotfix saveChatDebounced lazy; 2026-06-21 (#7) 卡 MVU 框架霸王禁用(保留 schema 脚本); (#8) 3 处 SCHEMA VIOLATION 守护降级 warn 放行(跨卡通杀 z.record 扩展性); (#9) 首次接管该卡 F5 提示 Toast",
+    "bundle_size_bytes": 1067390,
     "features": [
         "ds4_adapt",
         "schema_degradation",
         "parser_fallback",
         "cfs_hooks",
         "exclusive_mode",
-        "cfs_edition_marker"
+        "cfs_edition_marker",
+        "card_mvu_disable",
+        "schema_relax",
+        "first_takeover_hint"
     ],
-    "compat_note": "Day 4b 含 Mvu._cfsHooks register API（触发点插桩 Day 5）+ Mvu._cfsEdition + lockWindowMvu。CFS-Suite 可启动期检测 Mvu._cfsEdition 决定深度集成。"
+    "compat_note": "5.1.0 在 Day 4b 基础上叠加 #7-9：CFS-MVU 霸王禁卡自带 MagVarUpdate 框架(保留 Zod schema 脚本作 mag_command_parsed_for_zod 接管点) + insert 类 SCHEMA VIOLATION 降级 warn 放行(跨卡通杀 z.record 扩展性,如《虞淑婉》登场角色 alt_greet_3 的 樊雪芍 insert) + 首次接管 Toast 提示 F5。CFS-Suite 检测 _cfsEdition.features 判断深度集成能力。"
 }

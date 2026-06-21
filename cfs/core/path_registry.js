@@ -391,6 +391,66 @@ void _cfsPolyfillReport;
  } catch (_e) {}
  return null;
  }
+ // 防御层 hotfix(2026-06-21)：切卡后 stat_data 异步未就绪时，旧逻辑只在 1000ms 单发一次
+ //   autoRegister 会扑空 —— 卡自带 MVU（网络 import MagVarUpdate@beta）+ Zod schema 注册
+ //   + 首条消息处理通常都 >1s。表现：首次导入卡 PathRegistry 永远空，要手动「清空 path + F5」。
+ //   改为退避轮询 Mvu.getMvuData，等 stat_data 非空再 autoRegister。退避表累计 ~60s，
+ //   与 real_takeover v4_bootstrap 的 Mvu 60s timeout 对齐。
+ function _resolveMvuPR() {
+ if (typeof Mvu !== 'undefined' && Mvu && Mvu.getMvuData) return Mvu;
+ if (_GLOBAL && _GLOBAL.Mvu && _GLOBAL.Mvu.getMvuData) return _GLOBAL.Mvu;
+ if (typeof window !== 'undefined' && window.Mvu && window.Mvu.getMvuData) return window.Mvu;
+ if (typeof window !== 'undefined' && window.parent && window.parent.Mvu && window.parent.Mvu.getMvuData) return window.parent.Mvu;
+ return null;
+ }
+ var _AUTO_REG_BACKOFF = [1000, 2000, 4000, 8000, 15000, 30000]; // 累计 ~60s
+ function _scheduleAutoRegisterWhenReady(forChatId, attempt) {
+ attempt = attempt || 0;
+ if (attempt >= _AUTO_REG_BACKOFF.length) {
+ L.warn('PathRegistry 切卡 autoRegister：' + _AUTO_REG_BACKOFF.length + ' 次重试后 stat_data 仍未就绪，放弃 (chatId=' + forChatId + ')');
+ return;
+ }
+ setTimeout(function () {
+ // 守卫1：切卡链已失效（用户又切走） → 放弃本链，避免给错卡注册
+ if (forChatId !== _lastSeenChatId) {
+ L.debug('PathRegistry autoRegister 重试取消：chatId 已变 (' + forChatId + ' → ' + _lastSeenChatId + ')');
+ return;
+ }
+ // 守卫2：registry 已有数据（bootstrap / 手动已建） → 不重复
+ if (Object.keys(_registry).length > 0) {
+ L.info('PathRegistry 切卡 autoRegister 跳过：已有 ' + Object.keys(_registry).length + ' 条 path');
+ return;
+ }
+ var IS = CFS4 && CFS4.InjectionStrategy;
+ if (!IS || typeof IS.autoRegisterFromStatData !== 'function') {
+ L.warn('PathRegistry 切卡：autoRegisterFromStatData 不可用，退避重试');
+ _scheduleAutoRegisterWhenReady(forChatId, attempt + 1);
+ return;
+ }
+ // 先探 stat_data 是否就绪（非空），避免 autoRegister 内部抛错刷屏
+ var mvu = _resolveMvuPR();
+ var readyCheck = mvu
+ ? Promise.resolve(mvu.getMvuData({ type: 'message', message_id: -1 })).catch(function () { return null; })
+ : Promise.resolve(null);
+ readyCheck.then(function (mvuData) {
+ var ready = mvuData && mvuData.stat_data && Object.keys(mvuData.stat_data).length > 0;
+ if (!ready) {
+ L.debug('PathRegistry 切卡 autoRegister 等待 stat_data 就绪（第 ' + (attempt + 1) + ' 次，chatId=' + forChatId + '）');
+ _scheduleAutoRegisterWhenReady(forChatId, attempt + 1);
+ return;
+ }
+ Promise.resolve(IS.autoRegisterFromStatData({ default_class: 'volatile' }))
+ .then(function (auto) {
+ L.info('PathRegistry 切卡后 autoRegister 成功：' + (auto && auto.count != null ? auto.count : '?') + ' 条 path（第 ' + (attempt + 1) + ' 次就绪，chatId=' + forChatId + '）');
+ try { CFS4.emit('cfs_path_registry_chat_autoreg', { chatId: forChatId, count: auto && auto.count, attempt: attempt + 1 }); } catch (_e) {}
+ })
+ .catch(function (e) {
+ L.warn('PathRegistry 切卡 autoRegister 失败，退避重试', e);
+ _scheduleAutoRegisterWhenReady(forChatId, attempt + 1);
+ });
+ });
+ }, _AUTO_REG_BACKOFF[attempt]);
+ }
  function _onChatChanged() {
  var newChatId = _currentChatIdSafe();
  // 防误触：chat_id_changed 在保存/重命名等场景也会触发但 chatId 没真变
@@ -408,21 +468,8 @@ void _cfsPolyfillReport;
  _lastSeenChatId = newChatId;
  L.warn('PathRegistry 切卡 reset: chatId ' + prevChatId + ' → ' + newChatId + '（清掉 ' + prevCount + ' 条旧卡 path）');
  CFS4.emit('cfs_path_registry_chat_switched', { from: prevChatId, to: newChatId, cleared: prevCount });
- // 3. 触发 autoRegister 重建新卡 paths（异步，1s 延迟等 ST 把新卡 stat_data 绑定完）
- setTimeout(function () {
- try {
- var IS = CFS4 && CFS4.InjectionStrategy;
- if (IS && typeof IS.autoRegisterFromStatData === 'function') {
- Promise.resolve(IS.autoRegisterFromStatData({ default_class: 'volatile' }))
- .then(function (auto) {
- L.info('PathRegistry 切卡后 autoRegister: ' + (auto && auto.registered ? auto.registered : '?') + ' 条 (chatId=' + newChatId + ')');
- })
- .catch(function (e) { L.warn('PathRegistry 切卡后 autoRegister 失败', e); });
- } else {
- L.warn('PathRegistry 切卡：CFS4.InjectionStrategy.autoRegisterFromStatData 不可用，跳过');
- }
- } catch (e) { L.warn('PathRegistry 切卡 autoRegister 异常', e); }
- }, 1000);
+ // 3. 触发 autoRegister 重建新卡 paths（退避轮询等 stat_data 就绪，见上方 _scheduleAutoRegisterWhenReady）
+ _scheduleAutoRegisterWhenReady(newChatId, 0);
  }
 
  // 钩 cfs_schema_swap_committed → 失效 cache + 同步 registry

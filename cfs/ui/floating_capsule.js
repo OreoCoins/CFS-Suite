@@ -1212,6 +1212,62 @@ function _renderPanel(panel) {
     html += `<div class="hint" style="margin-top:4px">${rsiRounds === 0 ? '尚未捕获任何请求；发一条消息后即可看到结构' : `已捕获 ${rsiRounds} 轮请求（buffer 上限 5）`}</div>`;
     html += '</div>';
 
+    // 2026-06-21 v6 PETL section — Prompt Entry Takeover Layer
+    // 切卡时自动把含动态宏的 enabled entry 强制改 position 到 at_depth_as_user/depth=0
+    // 解决「时间/地点变量等 volatile 字段在 before_char/after_char 高位每轮击穿 cache」
+    const petl = window.CFS4?.PETL;
+    const petlEnabled = petl?.isEnabled ? petl.isEnabled() : true;
+    const petlHistory = petl?.getHistory ? petl.getHistory() : [];
+    const petlLastFix = petlHistory.length > 0 ? petlHistory[petlHistory.length - 1] : null;
+    const petlHistTotal = petlHistory.reduce((s, r) => {
+        const books = r.books || {};
+        return s + Object.keys(books).reduce((b, k) => b + (books[k]?.length || 0), 0);
+    }, 0);
+    html += '<div class="section">';
+    html += '<div class="section-title">⚡ PETL · 动态注入接管（v6）</div>';
+    html += '<div class="hint" style="margin:4px 0 6px 0">切卡自动扫所有含动态宏 entry（时间/地点/EJS/getvar 等），强制踢到 at_depth_as_user/depth=0；豁免：古法 — 用户在世界书条目名称上加 <code>[cfs:ignore]</code></div>';
+    if (!petl) {
+        html += '<div style="color:#e88;padding:6px 0">⚠ window.CFS4.PETL 未挂载（看 F12 [CFS-Suite/petl] 启动日志）</div>';
+    } else {
+        const stateColor = petlEnabled ? '#69db7c' : '#ff8787';
+        const stateText = petlEnabled ? 'ON · 切卡自动扫' : 'OFF · 自动扫已禁用';
+        html += `<div style="display:flex;align-items:center;gap:8px;margin:4px 0 8px 0;font-size:11px;">
+            <span>状态：<b style="color:${stateColor}">${stateText}</b></span>
+            <span style="color:#888">|</span>
+            <span>历史接管 <b>${petlHistTotal}</b> 条 entry / <b>${petlHistory.length}</b> 次</span>
+        </div>`;
+        if (petlLastFix) {
+            const since = Math.round((Date.now() - petlLastFix.ts) / 1000);
+            const lastBookNames = Object.keys(petlLastFix.books || {}).join(' / ');
+            const lastCount = Object.keys(petlLastFix.books || {}).reduce((s, k) => s + (petlLastFix.books[k]?.length || 0), 0);
+            html += `<div class="hint" style="margin:4px 0">最近一次：${since}s 前接管 <b>${lastCount}</b> 条（${lastBookNames || '?'}，触发=${petlLastFix.triggered_by || '?'}）</div>`;
+            const snaps = Object.values(petlLastFix.books || {}).flat().slice(0, 5);
+            if (snaps.length > 0) {
+                html += '<details style="margin:4px 0"><summary style="cursor:pointer;font-size:10px;color:#888">📋 最近一次接管明细（前 5 条）</summary>';
+                html += '<pre style="background:#0e0e0f;border:1px solid #333;border-radius:4px;padding:6px 8px;font-size:10px;line-height:1.5;color:#cfcfd5;max-height:160px;overflow:auto;margin:4px 0;white-space:pre">';
+                snaps.forEach(s => {
+                    const oldPos = s.oldPosition == null ? '?' : s.oldPosition;
+                    html += `uid=${s.uid}  ${oldPos} → at_depth_as_user/depth=0\n  ${_escapeHtml((s.comment || '').slice(0, 80))}\n`;
+                });
+                html += '</pre></details>';
+            }
+        } else {
+            html += '<div class="hint" style="margin:4px 0">尚未接管任何 entry（切卡或点「立即扫」触发）</div>';
+        }
+        html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">';
+        if (petlEnabled) {
+            html += '<button id="cfs-act-petl-disable" style="padding:3px 10px;font-size:10px;width:auto;margin:0">⏸ 关闭自动扫</button>';
+        } else {
+            html += '<button id="cfs-act-petl-enable" class="primary" style="padding:3px 10px;font-size:10px;width:auto;margin:0">▶ 开启自动扫</button>';
+        }
+        html += '<button id="cfs-act-petl-run" class="primary" style="padding:3px 10px;font-size:10px;width:auto;margin:0">⚡ 立即扫并接管</button>';
+        html += '<button id="cfs-act-petl-dry" style="padding:3px 10px;font-size:10px;width:auto;margin:0">🔬 预演（不改写）</button>';
+        html += '<button id="cfs-act-petl-rollback" class="danger" style="padding:3px 10px;font-size:10px;width:auto;margin:0">↩ 撤销最近一次</button>';
+        html += '<button id="cfs-act-petl-clear-hist" style="padding:3px 10px;font-size:10px;width:auto;margin:0">🗑 清空历史</button>';
+        html += '</div>';
+    }
+    html += '</div>';
+
     // 操作按钮 — 用人话
     html += '<div class="actions">';
     html += '<button id="cfs-act-enable" class="primary">🥵 启用接管</button>';
@@ -1385,6 +1441,75 @@ function _renderPanel(panel) {
     });
 
     // Day 7-5/7-6 事件
+    // PETL section 事件
+    panel.querySelector('#cfs-act-petl-enable')?.addEventListener('click', () => {
+        const p = window.CFS4?.PETL;
+        if (!p) { _pushLog(panel, '⚠ PETL 未挂载', 'warn'); return; }
+        p.setEnabled(true);
+        _pushLog(panel, '▶ PETL 自动扫已开启（切卡时自动扫并接管动态注入 entry）', 'info');
+        try { _renderPanel(panel); } catch (_e) {}
+    });
+    panel.querySelector('#cfs-act-petl-disable')?.addEventListener('click', () => {
+        const p = window.CFS4?.PETL;
+        if (!p) { _pushLog(panel, '⚠ PETL 未挂载', 'warn'); return; }
+        p.setEnabled(false);
+        _pushLog(panel, '⏸ PETL 自动扫已关闭（仅手动「立即扫」触发）', 'warn');
+        try { _renderPanel(panel); } catch (_e) {}
+    });
+    panel.querySelector('#cfs-act-petl-run')?.addEventListener('click', async () => {
+        const p = window.CFS4?.PETL;
+        if (!p) { _pushLog(panel, '⚠ PETL 未挂载', 'warn'); return; }
+        _pushLog(panel, '⚡ PETL 立即扫并接管中...', 'info');
+        try {
+            const r = await p.runNow();
+            if (r?.skipped) {
+                _pushLog(panel, `⚠ 跳过：${r.reason}`, 'warn');
+            } else {
+                _pushLog(panel, `⚡ 接管完成：${r.applied || 0} 条 entry（候选 ${r.candidates || 0}） / 跳过 ${JSON.stringify(r.skipped || {})}`, 'ok');
+            }
+        } catch (e) { _pushLog(panel, `✗ 扫描异常：${e?.message || e}`, 'err'); }
+        try { _renderPanel(panel); } catch (_e) {}
+    });
+    panel.querySelector('#cfs-act-petl-dry')?.addEventListener('click', async () => {
+        const p = window.CFS4?.PETL;
+        if (!p) { _pushLog(panel, '⚠ PETL 未挂载', 'warn'); return; }
+        _pushLog(panel, '🔬 PETL 预演扫描中（不写回）...', 'info');
+        try {
+            const r = await p.scanDryRun();
+            _pushLog(panel, `🔬 预演完成：候选 ${r.candidates || 0} 条 / 跳过 ${JSON.stringify(r.skipped || {})}`, 'info');
+            const lbs = r.groupedByBook ? Object.keys(r.groupedByBook) : [];
+            lbs.forEach(lb => {
+                const snaps = r.groupedByBook[lb].snapshots || [];
+                snaps.slice(0, 5).forEach(s => {
+                    _pushLog(panel, `  ↳ [${lb}] uid=${s.uid} ${s.oldPosition} → at_depth_as_user/0  ${(s.comment || '').slice(0, 60)}`, 'info');
+                });
+                if (snaps.length > 5) _pushLog(panel, `  ↳ ...还有 ${snaps.length - 5} 条`, 'info');
+            });
+        } catch (e) { _pushLog(panel, `✗ 预演异常：${e?.message || e}`, 'err'); }
+    });
+    panel.querySelector('#cfs-act-petl-rollback')?.addEventListener('click', async () => {
+        const p = window.CFS4?.PETL;
+        if (!p) { _pushLog(panel, '⚠ PETL 未挂载', 'warn'); return; }
+        if (!confirm('撤销 PETL 最近一次接管：把这些 entry 的 position/depth 还原到接管前？\n继续？')) return;
+        try {
+            const r = await p.rollbackLast();
+            if (r.reason) {
+                _pushLog(panel, `⚠ 回滚跳过：${r.reason}`, 'warn');
+            } else {
+                _pushLog(panel, `↩ 已回滚 ${r.reverted || 0} 条 entry 位置`, 'ok');
+            }
+        } catch (e) { _pushLog(panel, `✗ 回滚异常：${e?.message || e}`, 'err'); }
+        try { _renderPanel(panel); } catch (_e) {}
+    });
+    panel.querySelector('#cfs-act-petl-clear-hist')?.addEventListener('click', () => {
+        const p = window.CFS4?.PETL;
+        if (!p) { _pushLog(panel, '⚠ PETL 未挂载', 'warn'); return; }
+        if (!confirm('清空 PETL 接管历史记录（撤销功能将不可用）？\n继续？')) return;
+        try { p.clearHistory(); _pushLog(panel, '🗑 PETL 历史已清空', 'warn'); }
+        catch (e) { _pushLog(panel, `✗ 清空异常：${e?.message || e}`, 'err'); }
+        try { _renderPanel(panel); } catch (_e) {}
+    });
+
     panel.querySelector('#cfs-act-install-mvu')?.addEventListener('click', () => _installCfsMvu(panel));
     panel.querySelector('#cfs-act-copy-mvu-url')?.addEventListener('click', () => _copyCfsMvuUrl(panel));
     panel.querySelector('#cfs-act-scan-mvu')?.addEventListener('click', () => _scanAndDisableOtherMvu(panel));
