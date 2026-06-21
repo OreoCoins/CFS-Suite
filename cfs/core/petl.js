@@ -66,6 +66,20 @@ function _hasDynamicMarker(content) {
     return _matchAny(content, ps.DYNAMIC) || _matchAny(content, ps.MVU);
 }
 
+// 2026-06-22 WM 风格补强：综合 entry 风险判定
+//   优先用 PSISPatterns.getEntryRiskLevel（白名单 + unknown 兜底 + 字段风险 + 函数式 getvar）
+//   仅 'dynamic' 级别才触发 PETL 接管；'warning' 不动（避免误伤 ST 装饰指令类）
+//   PSIS 未就绪时退回旧 _hasDynamicMarker（content/comment 任一命中即接管）
+function _entryIsDynamic(entry) {
+    const ps = _GLOBAL && _GLOBAL.CFS4 && _GLOBAL.CFS4.PSISPatterns;
+    if (ps && typeof ps.getEntryRiskLevel === 'function') {
+        return ps.getEntryRiskLevel(entry) === 'dynamic';
+    }
+    const content = typeof entry.content === 'string' ? entry.content : '';
+    const comment = typeof entry.comment === 'string' ? entry.comment : '';
+    return _hasDynamicMarker(content) || _hasDynamicMarker(comment);
+}
+
 function _isAlreadyAtChatEnd(entry) {
     const p = entry.position;
     const okPos = (p === FIX_POSITION) || (p === 4);
@@ -129,8 +143,8 @@ async function scanAndTakeover(opts) {
             if (comment.indexOf(IGNORE_TAG) >= 0) { skipped.ignore++; continue; }
             if (comment.indexOf(CFS4_PREFIX) === 0) { skipped.cfs4++; continue; }
             if (_isAlreadyAtChatEnd(e)) { skipped.position_ok++; continue; }
-            const content = typeof e.content === 'string' ? e.content : '';
-            if (!_hasDynamicMarker(content) && !_hasDynamicMarker(comment)) { skipped.no_marker++; continue; }
+            // 2026-06-22 WM 风格综合风险判定：内容/字段/函数式 getvar/unknown 宏 全覆盖
+            if (!_entryIsDynamic(e)) { skipped.no_marker++; continue; }
 
             if (!groupedByBook[lb]) groupedByBook[lb] = { patches: [], snapshots: [] };
             groupedByBook[lb].patches.push({

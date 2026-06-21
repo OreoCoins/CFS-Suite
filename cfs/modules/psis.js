@@ -142,7 +142,142 @@ void _r;
  /<plot_review\b|<\/plot_review>/i,
  /合理性审查|普通审查|逻辑审查|审查协议|审查规则/,
  ],
+
+ // === 2026-06-22 WM 风格三档宏白名单（借鉴 jerryzmtz/worldbook-manager v4.04 App.vue:2230-2339）===
+ // 作者 kousakayou DC 私聊授权可借鉴方法，列表独立组织（含 CFS 特化）
+ // STABLE = ST 内置静态字段宏（一次会话内字节不变）→ 不视为风险
+ // KNOWN_DYNAMIC = 已知动态宏（时间 / 随机 / 变量族）→ dynamic 风险
+ // WARNING = 环境类（model/group/maxprompt 等）→ warning，不算 dynamic
+ // 不在三个名单内的宏名 → unknown 兜底（默认视为破坏 cache）
+ STABLE_MACROS: new Set([
+ // 角色字段
+ 'char', 'user', 'charifnotgroup', 'description', 'personality', 'scenario',
+ 'persona', 'charprompt', 'charinstruction', 'chardepthprompt',
+ 'charcreatornotes', 'charversion',
+ 'mesexamples', 'mesexamplesraw', 'charfirstmessage',
+ // 系统/作者提示
+ 'systemprompt', 'defaultsystemprompt',
+ 'authorsnote', 'charauthorsnote', 'defaultauthorsnote',
+ // instruct 指令
+ 'instructinput', 'instructoutput', 'instructfirstoutput', 'instructlastoutput',
+ 'instructsystem', 'instructseparator', 'chatseparator', 'chatstart',
+ 'reasoningprefix', 'reasoningsuffix', 'reasoningseparator',
+ // 格式控制
+ 'newline', '//', 'comment', 'space', 'noop', 'trim', 'reverse',
+ // legacy 兼容
+ 'bot',
+ ]),
+ KNOWN_DYNAMIC_MACROS: new Set([
+ // 随机 / 时间
+ 'random', 'pick', 'roll', 'time', 'date', 'weekday',
+ 'isotime', 'isodate', 'datetimeformat',
+ 'idleduration', 'idle_duration', 'timediff',
+ // 聊天内容
+ 'lastmessage', 'lastmessageid', 'lastusermessage', 'lastcharmessage',
+ 'firstincludedmessageid', 'firstdisplayedmessageid',
+ 'lastswipeid', 'currentswipeid', 'allchatrange', 'summary', 'input',
+ // 变量族 short
+ 'getvar', 'setvar', 'addvar', 'incvar', 'decvar', 'hasvar', 'deletevar',
+ 'getglobalvar', 'setglobalvar', 'addglobalvar', 'incglobalvar', 'decglobalvar',
+ 'hasglobalvar', 'deleteglobalvar',
+ // 变量族 long
+ 'get_global_variable', 'format_global_variable',
+ 'get_preset_variable', 'format_preset_variable',
+ 'get_character_variable', 'format_character_variable',
+ 'get_chat_variable', 'format_chat_variable',
+ 'get_message_variable', 'format_message_variable',
+ 'format_global_message', 'format_preset_message', 'format_character_message',
+ 'format_chat_message', 'format_message_message',
+ ]),
+ WARNING_MACROS: new Set([
+ 'group', 'groupnotmuted', 'notchar',
+ 'model', 'maxprompt', 'maxcontexttokens', 'maxresponsetokens',
+ 'ismobile', 'hasextension',
+ ]),
+ // 函数式变量调用（WM 命中 / CFS 旧 PSIS 漏判）
+ DYNAMIC_FUNCTION_CALL_RE: /\b(?:getvar|setvar|addvar|incvar|decvar|hasvar|deletevar)\s*\(/i,
+ // ST 装饰指令（行首 @@xxx）
+ DECORATOR_DIRECTIVE_RE: /^\s*@@[a-z_]+/im,
  };
+
+ // ---------- 2026-06-22 WM 风格风险判定 helper（独立重写，CFS 自有 license）----------
+ // 括号深度计数解析嵌套 {{...}} → macro names（粗正则会被嵌套打乱）
+ function _psisExtractMacroNames(text) {
+ const names = [];
+ if (!text || typeof text !== 'string') return names;
+ let idx = 0;
+ while (idx < text.length) {
+ const start = text.indexOf('{{', idx);
+ if (start === -1) break;
+ let depth = 1, cursor = start + 2;
+ while (cursor < text.length && depth > 0) {
+ if (text.startsWith('{{', cursor)) { depth++; cursor += 2; continue; }
+ if (text.startsWith('}}', cursor)) { depth--; cursor += 2; continue; }
+ cursor++;
+ }
+ if (depth !== 0) break;
+ const body = text.slice(start + 2, cursor - 2).trim();
+ const namePart = body.split('::')[0].split(/\s/)[0]
+ .replace(/[{}<>]/g, '').toLowerCase();
+ if (namePart) names.push(namePart);
+ if (body.indexOf('{{') >= 0) {
+ const inner = _psisExtractMacroNames(body);
+ for (let k = 0; k < inner.length; k++) names.push(inner[k]);
+ }
+ idx = cursor;
+ }
+ return names;
+ }
+
+ // 未在白名单的宏名 → unknown 风险（WM 哲学：保守，未知即风险）
+ function _psisHasUnknownMacro(text) {
+ const names = _psisExtractMacroNames(text);
+ for (let i = 0; i < names.length; i++) {
+ const n = names[i];
+ if (!n) continue;
+ if (CFG.STABLE_MACROS.has(n)) continue;
+ if (CFG.WARNING_MACROS.has(n)) continue;
+ if (CFG.KNOWN_DYNAMIC_MACROS.has(n)) return true;
+ return true;  // 未知宏兜底
+ }
+ return false;
+ }
+
+ // sticky / cooldown / delay / probability 字段风险（WM detectEntryRisks 同款）
+ function _psisHasEntryFieldRisk(entry) {
+ if (!entry) return false;
+ if (typeof entry.probability === 'number' && entry.probability !== 100) return true;
+ const eff = entry.effect || {};
+ if (eff.sticky !== null && eff.sticky !== undefined) return true;
+ if (eff.cooldown !== null && eff.cooldown !== undefined) return true;
+ if (eff.delay !== null && eff.delay !== undefined) return true;
+ const rec = entry.recursion || {};
+ if (rec.delay_until !== null && rec.delay_until !== undefined) return true;
+ return false;
+ }
+
+ // 综合风险判定，返回 'safe' / 'warning' / 'dynamic'
+ // PETL/SEM 主路径调用此函数取代旧 _hasDynamicMarker
+ function _psisGetEntryRiskLevel(entry) {
+ if (!entry) return 'safe';
+ if (_psisHasEntryFieldRisk(entry)) return 'dynamic';
+ const content = (typeof entry.content === 'string') ? entry.content : '';
+ const comment = (typeof entry.comment === 'string') ? entry.comment : '';
+ // 函数式 getvar(...) — CFS 旧 PSIS 漏判
+ if (CFG.DYNAMIC_FUNCTION_CALL_RE.test(content)) return 'dynamic';
+ // EJS 模板
+ if (/<%[\s\S]*?%>/.test(content)) return 'dynamic';
+ // MVU 特化（CFS 领先 WM 的部分）
+ for (let i = 0; i < CFG.MVU_PATTERNS.length; i++) {
+ if (CFG.MVU_PATTERNS[i].test(content)) return 'dynamic';
+ if (CFG.MVU_PATTERNS[i].test(comment)) return 'dynamic';
+ }
+ // 装饰指令 @@xxx
+ if (CFG.DECORATOR_DIRECTIVE_RE.test(content)) return 'warning';
+ // 宏白名单 + unknown 兜底
+ if (_psisHasUnknownMacro(content)) return 'dynamic';
+ return 'safe';
+ }
 
  // ---------- 状态 ----------
  const STATE = {
@@ -893,7 +1028,13 @@ void _r;
  '<span class="cfs-mvu-auto-state">📍 当前: ' + chatState + '</span>' +
  '</div>';
  if (persistent.length > 0) {
+ // 2026-06-22 修法 2 配套：纠正用户对"启用 vs 禁用 cache 友好"的二选一误解
+ //   常驻接口应保持启用，由 WM/PETL 把 position 改到 at_depth_as_user → 启用状态下 cache 也友好。
+ //   禁用按钮 = 不想要这接口的功能时才用，不是为了 cache 用的。
  html += '<div class="cfs-mvu-section"><div class="cfs-mvu-title">常驻接口（应永远启用）</div>' +
+ '<div class="cfs-mvu-tip" style="background:#1a3a1a;border:1px solid #2c5a2c;padding:6px 8px;margin:4px 0;border-radius:3px;font-size:11px;color:#9c9">'
+ + '💡 启用状态下 cache 也能稳定：让 WM 或 CFS PETL 把这些条目 position 改到 at_depth_as_user（chat 末尾），<b>启用 + at_depth_as_user = 功能保留 + prefix cache 命中</b>。仅在不需要这接口功能时才禁用。'
+ + '</div>' +
  persistent.map(renderEntry).join('') + '</div>';
  }
  if (oneshot.length > 0) {
@@ -908,7 +1049,7 @@ void _r;
  '</div>';
  html += '<div class="cfs-mvu-actions">' +
  '<button id="cfs-mvu-restore" class="cfs-btn cfs-btn-primary" title="启用选中的条目（不修 position）">✅ 启用选中</button>' +
- '<button id="cfs-mvu-close" class="cfs-btn cfs-btn-warn" title="禁用选中的条目 + 把 position 调到 at_depth_as_user/depth=0 让 cache 友好">🔒 禁用选中（+ 修 position）</button>' +
+ '<button id="cfs-mvu-close" class="cfs-btn cfs-btn-warn" title="仅在不需要该接口功能时使用。禁用 + 改 position 到 at_depth_as_user/depth=0（cache 不受影响）">🔒 禁用选中（+ 修 position）</button>' +
  '<span class="cfs-mvu-counter" id="cfs-mvu-chk-counter">已勾选 0 条</span>' +
  '</div>' +
  '<div class="cfs-mvu-tip">💡 典型生命周期：开新卡前 → ✅ 启用选中（含 initvar）→ AI 第一轮 → 🔒 禁用选中（initvar）。审查协议条目由你自己决定要不要勾。</div>' +
@@ -1796,11 +1937,23 @@ void _r;
    },
   };
   // 2026-06-21 v6 阶段 C：暴露 PSIS 识别 patterns 给 PETL 复用
+  // 2026-06-22 WM 风格补强：加白名单 + helper 函数（独立重写，不抄 WM 代码）
   _PSIS_PUBLISH.CFS4.PSISPatterns = {
    DYNAMIC: CFG.DYNAMIC_PATTERNS,
    MVU: CFG.MVU_PATTERNS,
    EXEMPT_ONESHOT: CFG.EXEMPT_ONESHOT_PATTERNS,
    REVIEW_PROTOCOL: CFG.REVIEW_PROTOCOL_PATTERNS,
+   // === WM 风格白名单（借鉴 jerryzmtz/worldbook-manager 思路，独立组织）===
+   STABLE_MACROS: CFG.STABLE_MACROS,
+   KNOWN_DYNAMIC_MACROS: CFG.KNOWN_DYNAMIC_MACROS,
+   WARNING_MACROS: CFG.WARNING_MACROS,
+   DYNAMIC_FUNCTION_CALL_RE: CFG.DYNAMIC_FUNCTION_CALL_RE,
+   DECORATOR_DIRECTIVE_RE: CFG.DECORATOR_DIRECTIVE_RE,
+   // === 工具函数 ===
+   extractMacroNames: _psisExtractMacroNames,
+   hasUnknownMacro: _psisHasUnknownMacro,
+   hasEntryFieldRisk: _psisHasEntryFieldRisk,
+   getEntryRiskLevel: _psisGetEntryRiskLevel,
   };
  }
 

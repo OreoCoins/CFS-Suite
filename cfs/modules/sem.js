@@ -140,6 +140,39 @@ void _r;
   var helper = TH();
   if (!helper || typeof helper.getLorebookEntries !== 'function') return [];
 
+  // 2026-06-22 修法 2 — SEM 降级，让位 PETL/WM
+  //   旧 density 阈值（<5/1000 字符）是物理错误的：prefix cache 字节级，
+  //   1 个动态宏和 100 个动态宏破坏力一样，"密度低" 不等于 "不破坏 cache"。
+  //   实测：跟 WM 走 at_depth_as_user 命中率 80%+，SEM 推 prefix 仅 70%+。
+  //   PETL v6 已具备"含动态宏 → 踢 chat 末尾"能力，SEM 只迁纯静态长 entry 兜底。
+  var _SEM_PSIS_HOST = (typeof window !== 'undefined') ? ((window.parent && window.parent.CFS4) ? window.parent : window) : null;
+  var _SEM_PSIS_PATTERNS = _SEM_PSIS_HOST && _SEM_PSIS_HOST.CFS4 && _SEM_PSIS_HOST.CFS4.PSISPatterns;
+  if (!_SEM_PSIS_PATTERNS) {
+   console.warn('[SEM] PSISPatterns 未就绪，本次扫描中止（避免旧 density 误判）');
+   return [];
+  }
+  function _semMatchesAnyPattern(s, arr) {
+   if (!s || !Array.isArray(arr)) return false;
+   for (var _pi = 0; _pi < arr.length; _pi++) {
+    try { if (arr[_pi].test(s)) return true; } catch (_e) {}
+   }
+   return false;
+  }
+  function _semHasDynamicMarker(s) {
+   return _semMatchesAnyPattern(s, _SEM_PSIS_PATTERNS.DYNAMIC)
+       || _semMatchesAnyPattern(s, _SEM_PSIS_PATTERNS.MVU);
+  }
+  // 2026-06-22 WM 风格综合判定：白名单 + unknown 兜底 + 字段风险 + 函数式 getvar
+  //   优先用 PSISPatterns.getEntryRiskLevel；老版 PSIS 未升级时退回 DYNAMIC/MVU 双 pattern
+  function _semEntryIsRisky(entry) {
+   if (typeof _SEM_PSIS_PATTERNS.getEntryRiskLevel === 'function') {
+    return _SEM_PSIS_PATTERNS.getEntryRiskLevel(entry) === 'dynamic';
+   }
+   var c = (entry && typeof entry.content === 'string') ? entry.content : '';
+   var cm = (entry && typeof entry.comment === 'string') ? entry.comment : '';
+   return _semHasDynamicMarker(c) || _semHasDynamicMarker(cm);
+  }
+
   var out = [];
   for (var bi = 0; bi < books.length; bi++) {
    var book = books[bi];
@@ -158,16 +191,18 @@ void _r;
     var content = e.content || '';
     if (content.length < SEM_CONFIG.MIN_LEN) continue;
     if (!_semIsAtDepthPos(e.position)) continue;
-    var density = _semMacroDensity(content);
-    if (density >= 10) continue;
+    // 2026-06-22 修法 2 + WM 风格补强：命中综合 dynamic 风险即排除
+    //   覆盖 EJS/MVU/函数式 getvar/未知宏兜底/字段风险（sticky/cooldown/probability/delay）
+    if (_semEntryIsRisky(e)) continue;
+    var density = _semMacroDensity(content);  // 仅展示用，不再作筛选
 
     // v4.9.1: 已迁移过的条目（无论当前 position 在哪）一律从候选表跳过
     // 漂移回拉的条目走「已迁移列表 → ⚡ 重迁所有漂移」单一入口
     if (_semHasMetadata(book, e.uid)) continue;
 
     var estGain = _semEstimateGain(content.length);
-    var recommended = density < SEM_CONFIG.PRECHECK_DENSITY
-      && content.length >= SEM_CONFIG.PRECHECK_LEN;
+    // 修法 2：已通过精准 pattern 排除动态宏，长度达 PRECHECK_LEN 即推荐
+    var recommended = content.length >= SEM_CONFIG.PRECHECK_LEN;
 
     out.push({
      uid: e.uid,
@@ -448,7 +483,8 @@ void _r;
   return '<details class="cfs-sem" id="cfs-sem-root" open>' +
    '<summary>📦 世界书优化 SEM — 候选扫描 + 迁移 + 回滚</summary>' +
    '<div class="cfs-sem-body" id="cfs-sem-body">' +
-   '<div class="cfs-sem-hint">点 <b>🔍 扫描候选</b> 查找可迁到 prefix 区的稳态 entry，命中率有望提升</div>' +
+   '<div class="cfs-sem-hint">点 <b>🔍 扫描候选</b> 查找<b>零动态宏</b>的长 entry 迁到 prefix 区。' +
+   '<br><span style="color:#888;font-size:11px">推荐用 WM 统一管理 worldbook 位置；SEM 仅迁 PETL 不处理的纯静态长 entry 兜底。含 mvu/EJS/getvar 的 entry 由 PETL 自动踢 chat 末尾，不进 SEM 候选。</span></div>' +
    '<div class="cfs-sem-actions">' +
    '<button id="cfs-sem-btn-scan" class="cfs-btn cfs-btn-primary">🔍 扫描候选</button>' +
    '<button id="cfs-sem-btn-mig-list" class="cfs-btn">📋 已迁移列表</button>' +
@@ -460,8 +496,10 @@ void _r;
 
  function _semRenderCandList(cands, driftedCnt) {
   driftedCnt = driftedCnt || 0;
+  // 2026-06-22 修法 2：drift 不一定是"错"——PETL 或 WM 把 entry 拉到 at_depth_as_user
+  // 才是正确位置（实测 80%+ vs SEM 推 prefix 70%+）。文案改中性，不再煽动用户重迁。
   var driftHintHtml = driftedCnt > 0
-   ? '<div class="cfs-sem-drift-warn">ℹ 检测到 <b>' + driftedCnt + '</b> 条已迁移条目被外部插件回拉，本扫描结果不包含它们。请到「📋 已迁移列表」点「⚡ 重迁所有漂移」处理</div>'
+   ? '<div class="cfs-sem-drift-warn" style="color:#888">ℹ 有 <b>' + driftedCnt + '</b> 条已迁移条目当前不在 prefix 区（被 PETL/WM/手动改回）。多数情况下这是正确的，prefix cache 字节级，含动态宏的 entry 留 chat 末尾才能稳定命中。如需强制拉回，到「📋 已迁移列表」操作。</div>'
    : '';
   if (!cands || cands.length === 0) {
    return driftHintHtml + '<div class="cfs-sem-empty">无新增候选 — 当前 worldbook 已无满足条件的未迁移 entry</div>';
@@ -522,14 +560,15 @@ void _r;
     '</tr>';
   }
 
+  // 2026-06-22 修法 2：drift 改中性表述，建议优先回滚而非重迁
   var driftWarn = driftedCnt > 0
-   ? '<div class="cfs-sem-drift-warn">⚠ 检测到 <b>' + driftedCnt + '</b> 条条目被外部插件回拉，建议「⚡ 重迁所有漂移」</div>'
+   ? '<div class="cfs-sem-drift-warn" style="color:#888">ℹ 有 <b>' + driftedCnt + '</b> 条不在 prefix。多数是 PETL 自动把含动态宏 entry 踢到 chat 末尾（正确行为）。如这些 entry 确实是纯静态长内容，可「↩ 回滚选中」清掉 SEM 记录让 PETL 不再扫；不建议「⚡ 强制重迁」。</div>'
    : '';
 
-  return '<div class="cfs-sem-summary">已迁移 <b>' + mig.length + '</b> 条' + (driftedCnt > 0 ? '（其中 <span style="color:#e88">' + driftedCnt + '</span> 条漂移）' : '') + '</div>' +
+  return '<div class="cfs-sem-summary">已迁移 <b>' + mig.length + '</b> 条' + (driftedCnt > 0 ? '（其中 <span style="color:#888">' + driftedCnt + '</span> 条不在 prefix）' : '') + '</div>' +
    driftWarn +
    '<div class="cfs-sem-controls">' +
-   (driftedCnt > 0 ? '<button id="cfs-sem-btn-remig-drift" class="cfs-btn cfs-btn-primary">⚡ 重迁所有漂移 (' + driftedCnt + ')</button> ' : '') +
+   (driftedCnt > 0 ? '<button id="cfs-sem-btn-remig-drift" class="cfs-btn" style="opacity:0.7">⚡ 强制重迁回 prefix (' + driftedCnt + ')</button> ' : '') +
    '<button id="cfs-sem-btn-rb-sel" class="cfs-btn">↩ 回滚选中</button> ' +
    '<button id="cfs-sem-btn-rb-all" class="cfs-btn">↩↩ 全部回滚</button> ' +
    '<button id="cfs-sem-btn-back" class="cfs-btn">⬅ 返回扫描</button>' +
