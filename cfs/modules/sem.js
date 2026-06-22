@@ -57,6 +57,10 @@ void _r;
  var _semDriftNotified = {};
  var _semPassiveDone = false;
 
+ // 2026-06-22 用户反馈第二点："不随着 chat change 改变"。
+ // 由 _semBindEvents 在每次 panel 渲染后挂指针；chat_id_changed 监听 debounce 后调用。
+ var _semCurrentRefresh = null;
+
  // === localStorage metadata 层（替代 entry.extensions.cfs.sem）===
  // 实测 TavernHelper.setLorebookEntries 静默丢弃 extensions 字段，metadata 必须本地存
  var SEM_LS_KEY = 'cfs_sem_migrations_v1';
@@ -351,8 +355,14 @@ void _r;
   return {ok: ok, fail: fail};
  }
 
- // 列出已迁移 entry（用于 UI 已迁移区） — 走 localStorage + 回读 worldbook 拿当前 position
- async function _semListMigrated() {
+ // 2026-06-22 用户报告 BUG：A 卡跑过 SEM → 切 B 卡打开「📋 已迁移列表」
+ //   仍显示 A 卡 entry，并提示"建议迁回 prefix"。根因：旧实现走 _semStoreAll() 拿 LS 全集，
+ //   不按当前角色绑定的 worldbook 过滤。下游 _semAuditDrift / _semRemigrateDrifted / UI _doMigList
+ //   全部受污染（A worldbook 没绑当前角色 → entry_missing/drift 误报）。
+ //   修法：默认 activeOnly=true，仅列当前角色绑定 worldbook 的记录。保留 {activeOnly:false} 入口
+ //   给将来"跨卡历史清理"需求。
+ async function _semListMigrated(opts) {
+  var activeOnly = !opts || opts.activeOnly !== false;
   var all = _semStoreAll();
   var keys = Object.keys(all);
   if (keys.length === 0) return [];
@@ -365,6 +375,16 @@ void _r;
    var uid = Number(parts[1]);
    if (!byBook[book]) byBook[book] = [];
    byBook[book].push(uid);
+  }
+
+  if (activeOnly) {
+   var activeBooks = await _semGetActiveBooks();
+   var activeSet = {};
+   for (var ai = 0; ai < activeBooks.length; ai++) activeSet[activeBooks[ai]] = 1;
+   for (var bkName in byBook) {
+    if (!activeSet[bkName]) delete byBook[bkName];
+   }
+   if (Object.keys(byBook).length === 0) return [];
   }
 
   var helper = TH();
@@ -450,8 +470,10 @@ void _r;
   return {ok: totalOk, fail: totalFail};
  }
 
- // 全部回滚（按 localStorage 全部）
- async function _semRollbackAll() {
+ // 全部回滚（默认仅当前角色绑定的 worldbook；传 {activeOnly:false} 才回滚跨卡全集）
+ // 2026-06-22 同 _semListMigrated 修法：避免在 B 卡上点「↩↩ 全部回滚」误碰 A 卡 entry。
+ async function _semRollbackAll(opts) {
+  var activeOnly = !opts || opts.activeOnly !== false;
   var all = _semStoreAll();
   var byBook = {};
   for (var key in all) {
@@ -459,6 +481,14 @@ void _r;
    var book = parts[0], uid = Number(parts[1]);
    if (!byBook[book]) byBook[book] = [];
    byBook[book].push(uid);
+  }
+  if (activeOnly) {
+   var activeBooks = await _semGetActiveBooks();
+   var activeSet = {};
+   for (var ai = 0; ai < activeBooks.length; ai++) activeSet[activeBooks[ai]] = 1;
+   for (var bkName in byBook) {
+    if (!activeSet[bkName]) delete byBook[bkName];
+   }
   }
   var totalOk = 0, totalFail = 0;
   for (var bk in byBook) {
@@ -538,8 +568,10 @@ void _r;
  }
 
  function _semRenderMigList(mig) {
+  // 2026-06-22 修法：默认仅显示当前角色绑定 worldbook 的迁移记录（避免切卡后看到其他卡的污染）
+  var scopeHint = '<div class="cfs-sem-hint" style="color:#888;font-size:11px">仅显示当前角色绑定的 worldbook 迁移记录。切换角色 / 解绑 worldbook 后旧记录会自动隐藏（LS 不删，重新绑回即可见）。</div>';
   if (!mig || mig.length === 0) {
-   return '<div class="cfs-sem-empty">尚无已迁移条目</div>';
+   return scopeHint + '<div class="cfs-sem-empty">尚无已迁移条目</div>';
   }
   var driftedCnt = 0;
   for (var d = 0; d < mig.length; d++) if (mig[d].drifted) driftedCnt++;
@@ -565,7 +597,8 @@ void _r;
    ? '<div class="cfs-sem-drift-warn" style="color:#888">ℹ 有 <b>' + driftedCnt + '</b> 条不在 prefix。多数是 PETL 自动把含动态宏 entry 踢到 chat 末尾（正确行为）。如这些 entry 确实是纯静态长内容，可「↩ 回滚选中」清掉 SEM 记录让 PETL 不再扫；不建议「⚡ 强制重迁」。</div>'
    : '';
 
-  return '<div class="cfs-sem-summary">已迁移 <b>' + mig.length + '</b> 条' + (driftedCnt > 0 ? '（其中 <span style="color:#888">' + driftedCnt + '</span> 条不在 prefix）' : '') + '</div>' +
+  return scopeHint +
+   '<div class="cfs-sem-summary">已迁移 <b>' + mig.length + '</b> 条' + (driftedCnt > 0 ? '（其中 <span style="color:#888">' + driftedCnt + '</span> 条不在 prefix）' : '') + '</div>' +
    driftWarn +
    '<div class="cfs-sem-controls">' +
    (driftedCnt > 0 ? '<button id="cfs-sem-btn-remig-drift" class="cfs-btn" style="opacity:0.7">⚡ 强制重迁回 prefix (' + driftedCnt + ')</button> ' : '') +
@@ -707,6 +740,20 @@ void _r;
 
   if (btnScan) btnScan.onclick = _doScan;
   if (btnMigList) btnMigList.onclick = _doMigList;
+
+  // 2026-06-22 把"当前 panel 应该刷新哪个 list"挂到模块层指针
+  //   chat_id_changed listener 通过该指针触发自动刷新
+  //   依据 DOM 上是否存在 mig-list 专属按钮判断当前是候选还是已迁移视图
+  _semCurrentRefresh = function () {
+   if (!root || !root.open) return;
+   if (!listDiv) return;
+   if (D.getElementById('cfs-sem-btn-rb-all')) {
+    return _doMigList();
+   }
+   if (D.getElementById('cfs-sem-btn-migrate') || D.getElementById('cfs-sem-btn-rescan')) {
+    return _doScan();
+   }
+  };
  }
 
  // === 拖动 + localStorage 持久化 ===
@@ -847,6 +894,32 @@ void _r;
     if (_semAuditTimer) clearTimeout(_semAuditTimer);
     _semAuditTimer = setTimeout(_semAuditDrift, 1500);
    });
+  }
+ } catch (e) {}
+
+ // === 挂 chat_id_changed → 800ms 防抖 → 清 drift 状态 + 刷新 UI ===
+ // 2026-06-22 用户报告："不随着 chat change 改变"
+ //   切换 chat / character 后，worldbook 绑定会变；
+ //   - 清 _semDriftCount/_semDriftNotified（旧 uid 与新卡可能撞）
+ //   - 清 _semPassiveDone（新卡允许重新被动扫描）
+ //   - 如果 SEM panel 还展开，按当前显示的 tab 自动重拉数据
+ // 兼容 ST 事件名（参考 cfs/core/kernel.js 注释）：chat_id_changed / character_selected
+ try {
+  if (typeof eventOn === 'function') {
+   var _semChatTimer = null;
+   var _semOnChatChanged = function () {
+    if (_semChatTimer) clearTimeout(_semChatTimer);
+    _semChatTimer = setTimeout(function () {
+     _semDriftCount = {};
+     _semDriftNotified = {};
+     _semPassiveDone = false;
+     if (typeof _semCurrentRefresh === 'function') {
+      try { _semCurrentRefresh(); } catch (e0) { console.warn('[SEM] auto-refresh on chat_id_changed failed', e0); }
+     }
+    }, 800);
+   };
+   eventOn('chat_id_changed', _semOnChatChanged);
+   try { eventOn('character_selected', _semOnChatChanged); } catch (e1) {}
   }
  } catch (e) {}
 
