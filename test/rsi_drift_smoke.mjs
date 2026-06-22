@@ -180,4 +180,43 @@ assert.ok(Array.isArray(r5), 'Node 环境应返数组而非抛错');
 assert.equal(r5.length, 0, 'Node 无 TavernHelper → 空数组');
 pass(`Node 无 TavernHelper 容错通过 (返 ${r5.length} 项)`);
 
+// ============ Task 6: findUnstableEntries 端到端 ============
+console.log('\n=== Task 6: findUnstableEntries (端到端) ===');
+__testHooks.injectRingBuffer(fx.ringBuffer);
+
+// 不足 3 轮时 → insufficient (临时清掉测一次)
+__testHooks.injectRingBuffer(fx.ringBuffer.slice(0, 2));
+const r6a = await RSI.findUnstableEntries({ _testEntries: fx.activeLoreEntries });
+assert.equal(r6a.status, 'insufficient');
+assert.equal(r6a.roundsCount, 2);
+assert.equal(r6a.needed, 1);
+pass(`不足 3 轮 → insufficient (needed=1)`);
+
+// 恢复 5 轮
+__testHooks.injectRingBuffer(fx.ringBuffer);
+const r6 = await RSI.findUnstableEntries({ _testEntries: fx.activeLoreEntries });
+assert.equal(r6.status, 'ok');
+assert.equal(r6.roundsCount, 5);
+assert.ok(r6.candidates.length >= 1, `应至少 1 个候选, 实际 ${r6.candidates.length}`);
+pass(`5 轮跑通: ${r6.candidates.length} 个候选`);
+
+// 找到骰池候选 (uid=6 单命中)
+const dice = r6.candidates.find(c => c.matchType === 'single' && c.hits[0]?.uid === 6);
+assert.ok(dice, `应单命中骰池 uid=6, 实际 candidates=${JSON.stringify(r6.candidates.map(c => ({idx: c.blockIdx, type: c.matchType, hits: c.hits.map(h => h.uid)})))}`);
+assert.equal(dice.hits[0].comment, '公平骰池系统');
+assert.equal(dice.hits[0].book, '无限回廊2.2_主世界书');
+assert.equal(dice.hits[0].position, 'before_character_definition');
+console.log(`     dice candidate: blockIdx=${dice.blockIdx}, variableLen=${dice.variableLen}c, window=${dice.windowSize}c`);
+pass(`骰池精准单命中 (blockIdx=${dice.blockIdx}, matchLen=${dice.hits[0].matchLen})`);
+
+// 完全空 entries → 候选还在，但 matchType=none + 指纹
+__testHooks.injectRingBuffer(fx.ringBuffer);
+const r6b = await RSI.findUnstableEntries({ _testEntries: [] });
+assert.ok(r6b.candidates.length >= 1);
+for (const c of r6b.candidates) {
+    assert.equal(c.matchType, 'none', '无 entries → 全 none');
+    assert.ok(c.fingerprint.length <= 80, `指纹长度 ≤80, 实际 ${c.fingerprint.length}`);
+}
+pass(`空 entries → 全 candidates matchType=none + 80 字符指纹`);
+
 console.log(`\n=== 全部 ${testCount} 项断言通过 ===`);

@@ -709,6 +709,76 @@ function _normalizeEntryPosition(e) {
     return numToStr[p] ?? `unknown(${p})`;
 }
 
+// === 2026-06-22 v6.4 Drift Panel · 主入口 findUnstableEntries ===
+// 流程：
+//   1. ring buffer ≥ 3 轮才可信 (insufficient 兜底)
+//   2. 对每个 idx (pre-history 区) 算跨轮 hash 集合，size ≥ 2 即 unstable
+//   3. 对每个 unstable idx：diff 定位变化区 → 上下文窗口 → 反查 entry
+//   4. 返回候选列表 (single/multi/none 三种 matchType)
+async function _findUnstableEntries(opts) {
+    const N = _ringBuffer.length;
+    if (N < 3) {
+        return { status: 'insufficient', roundsCount: N, needed: 3 - N };
+    }
+    const latest = _ringBuffer[N - 1];
+    const histRange = _findHistoryRange(latest);
+    const prefixEnd = histRange.hasHistory ? histRange.start : latest.length;
+
+    // 跨轮 hash 不一致 idx (≥3 轮观察, ≥2 个不同 hash)
+    const unstableIdx = [];
+    for (let i = 0; i < prefixEnd; i++) {
+        const hashes = new Set();
+        let observed = 0;
+        for (let r = 0; r < N; r++) {
+            if (i < _ringBuffer[r].length) {
+                hashes.add(_ringBuffer[r][i].hash);
+                observed++;
+            }
+        }
+        if (observed >= 3 && hashes.size >= 2) {
+            unstableIdx.push({ idx: i, distinctHashes: hashes.size, observedRounds: observed });
+        }
+    }
+    if (unstableIdx.length === 0) {
+        return { status: 'ok', roundsCount: N, candidates: [] };
+    }
+
+    // 拿 active entries（测试可注入 opts._testEntries）
+    const entries = opts?._testEntries ?? await _getActiveLoreEntries();
+
+    const candidates = [];
+    for (const u of unstableIdx) {
+        const blk = latest[u.idx];
+        // 取该 idx 跨 N 轮的完整 content (容错：missing → 跳)
+        const roundsContent = _ringBuffer
+            .map(r => u.idx < r.length ? r[u.idx].content : null)
+            .filter(c => typeof c === 'string');
+        if (roundsContent.length < 2) continue;
+
+        const { stablePrefixLen, stableSuffixLen } = _diffRoundsFindVariableRegions(roundsContent);
+        const latestContent = blk.content || '';
+        const window = _extractContextWindow(latestContent, stablePrefixLen, stableSuffixLen, 2048);
+        const lookup = _lookupEntryByContent(window, entries);
+
+        candidates.push({
+            blockIdx: u.idx,
+            role: blk.role,
+            len: blk.len,
+            distinctHashes: u.distinctHashes,
+            observedRounds: u.observedRounds,
+            stablePrefixLen,
+            stableSuffixLen,
+            variableLen: Math.max(0, latestContent.length - stablePrefixLen - stableSuffixLen),
+            windowSize: window.length,
+            matchType: lookup.matchType,
+            hits: lookup.hits,
+            fingerprint: lookup.fingerprint,
+        });
+    }
+
+    return { status: 'ok', roundsCount: N, candidates };
+}
+
 // 2026-06-21 v6 阶段 D：drift candidates 给 PETL 漏扫补充
 // 返回 postHistoryBlocks 中 status='dynamic' 的 contentSlice 数组
 // PETL 拿这些 contentSlice 反查 worldbook entry：哪条 entry 的 content 含某 slice
@@ -746,6 +816,7 @@ export const __testHooks = {
     _longestCommonSubstrLen,
     _diffRoundsFindVariableRegions,
     _extractContextWindow,
+    injectRingBuffer: (rb) => { _ringBuffer.length = 0; _ringBuffer.push(...rb); },
 };
 
 export const RSI = {
@@ -757,6 +828,7 @@ export const RSI = {
     findHistoryRange: _findHistoryRange,
     getDriftCandidates: _getDriftCandidates, // v6 阶段 D: PETL 漏扫补充入口
     getActiveLoreEntries: _getActiveLoreEntries, // v6.4 Drift Panel: 反查源数据
+    findUnstableEntries: _findUnstableEntries,   // v6.4 Drift Panel: 主入口
     genSimpleOutput: _genSimpleOutput,
     genFullOutput: _genFullOutput,
     resetBuffer: () => { _ringBuffer.length = 0; },
