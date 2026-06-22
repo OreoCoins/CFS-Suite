@@ -27,6 +27,7 @@ function fnv1a8(s) {
 }
 
 // snapshot 的 block#0 包含 RSI 自己加的 4 行 hash header (8-hex/行)，剥掉
+// C 方案：存完整 content（128KB cap）。配合 diff-locate 反查算法精确定位 entry。
 function snapToRound(snap) {
     return snap.messages.map((m, idx) => {
         let text = m.text || '';
@@ -39,12 +40,14 @@ function snapToRound(snap) {
             }
             if (skip > 0) text = lines.slice(skip).join('\n');
         }
+        const cap = 131072; // 128KB
+        const content = text.length > cap ? text.slice(0, cap) : text;
         return {
             idx,
             role: m.role || 'unknown',
             len: text.length,
             hash: fnv1a8(text),
-            contentSlice: text.slice(0, 1024),
+            content,
         };
     });
 }

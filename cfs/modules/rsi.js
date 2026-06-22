@@ -81,6 +81,109 @@ function _stripMacros(content) {
     return content.replace(_MACRO_REGEX, '');
 }
 
+// === 2026-06-22 v6.4 Drift Panel · C 方案：diff-locate 精准反查 ===
+//
+// 流程：跨 N 轮 hash 不稳定的 block →
+//   1. _diffRoundsFindVariableRegions: 跨轮算最长公共 prefix/suffix，夹层 = 变化区域
+//   2. _extractContextWindow: 变化区 ±2048 字符上下文窗口 (限 latest round content)
+//   3. _lookupEntryByContent: 用窗口在 active entries 里做 LCS 反查
+// 用 window 而不是整块反查，避免把不变化的 entry 误当元凶。
+
+// 跨 N 轮内容找变化区域 (最长公共前缀 + 最长公共后缀 = 稳定区，剩下是变化区)
+// 入: roundsContent[] (≥2 项，每项是该 block 在某一轮的完整 content)
+// 出: { stablePrefixLen, stableSuffixLen }
+function _diffRoundsFindVariableRegions(roundsContent) {
+    if (!Array.isArray(roundsContent) || roundsContent.length < 2) {
+        return { stablePrefixLen: 0, stableSuffixLen: 0 };
+    }
+    const ref = roundsContent[0];
+    let prefixLen = ref.length;
+    let suffixLen = ref.length;
+
+    for (let r = 1; r < roundsContent.length; r++) {
+        const cur = roundsContent[r];
+        // 前缀：找 ref 和 cur 的最长公共前缀
+        let pl = 0;
+        const maxP = Math.min(prefixLen, cur.length);
+        while (pl < maxP && ref.charCodeAt(pl) === cur.charCodeAt(pl)) pl++;
+        prefixLen = Math.min(prefixLen, pl);
+
+        // 后缀：找最长公共后缀，但不能跟前缀重叠
+        let sl = 0;
+        const maxS = Math.min(suffixLen, cur.length - prefixLen, ref.length - prefixLen);
+        while (sl < maxS && ref.charCodeAt(ref.length - 1 - sl) === cur.charCodeAt(cur.length - 1 - sl)) sl++;
+        suffixLen = Math.min(suffixLen, sl);
+    }
+
+    return { stablePrefixLen: prefixLen, stableSuffixLen: suffixLen };
+}
+
+// 取上下文窗口：变化区 ±padding 字符（用 latest round content）
+function _extractContextWindow(latestContent, prefixLen, suffixLen, padding) {
+    if (typeof latestContent !== 'string' || latestContent.length === 0) return '';
+    const pad = (typeof padding === 'number' && padding >= 0) ? padding : 2048;
+    const totalLen = latestContent.length;
+    const varStart = prefixLen;
+    const varEnd = totalLen - suffixLen;
+    if (varStart >= varEnd) return ''; // 无变化区
+    const winStart = Math.max(0, varStart - pad);
+    const winEnd = Math.min(totalLen, varEnd + pad);
+    return latestContent.slice(winStart, winEnd);
+}
+
+// 反查：用 window text (含变化区+上下文) 在 active entries 的剥宏 content 里找最长公共子串
+// 返回 single (唯一 enabled 命中) / multi (≥2 个 enabled 命中) / none (无命中或 <80 字符)
+// 5 道精度保护：①active 限定(调用方负责) ②多命中不挑 ③过滤 disabled ④剥宏匹配 ⑤<80 字符不命中
+const _MIN_MATCH_LEN = 80;
+
+// O(n*m) DP 最长公共子串长度（不还原子串，仅给反查打分）
+// entry.content 通常 < 50KB × blockSlice ≤ 1024 → 约 50M ops ≈ 50ms，可接受
+function _longestCommonSubstrLen(a, b) {
+    const n = a.length, m = b.length;
+    if (n === 0 || m === 0) return 0;
+    let prev = new Uint16Array(m + 1);
+    let curr = new Uint16Array(m + 1);
+    let maxLen = 0;
+    for (let i = 1; i <= n; i++) {
+        for (let j = 1; j <= m; j++) {
+            if (a.charCodeAt(i - 1) === b.charCodeAt(j - 1)) {
+                curr[j] = prev[j - 1] + 1;
+                if (curr[j] > maxLen) maxLen = curr[j];
+            } else {
+                curr[j] = 0;
+            }
+        }
+        [prev, curr] = [curr, prev];
+        curr.fill(0);
+    }
+    return maxLen;
+}
+
+function _lookupEntryByContent(windowText, entries) {
+    const fp = (windowText || '').slice(0, 80);
+    if (!Array.isArray(entries) || entries.length === 0 || typeof windowText !== 'string' || windowText.length < _MIN_MATCH_LEN) {
+        return { matchType: 'none', hits: [], fingerprint: fp };
+    }
+    const hits = [];
+    for (const e of entries) {
+        if (!e || e.enabled === false) continue;             // ③ 过滤 disabled
+        const stripped = _stripMacros(e.content || '');       // ④ 剥宏后匹配
+        if (stripped.length < _MIN_MATCH_LEN) continue;       // entry 太短 → 跳过
+        const matchLen = _longestCommonSubstrLen(windowText, stripped);
+        if (matchLen >= _MIN_MATCH_LEN) {                     // ⑤ <80 字符不命中
+            hits.push({
+                book: e.book, uid: e.uid, comment: e.comment,
+                position: e.position, depth: e.depth, matchLen,
+            });
+        }
+    }
+    let matchType;
+    if (hits.length === 0) matchType = 'none';
+    else if (hits.length === 1) matchType = 'single';
+    else matchType = 'multi';                                 // ② 多命中不主动挑
+    return { matchType, hits, fingerprint: fp };
+}
+
 // L2 修复：history 识别 — 用 assistant 块作为强锚点
 //
 // 旧策略（已废弃）：从末尾反向找 user/assistant 占比 ≥80% 的最大窗口。在「预设把指令
@@ -358,8 +461,9 @@ function _pushFromRealRequest(messages, sourceLabel) {
                 role: (m && m.role) || 'unknown',
                 len: content.length,
                 hash: _fnv1a8(content),
-                // 2026-06-22 v6.4: 扩 240→1024，给 RSI Drift Panel 反查 worldbook entry 留剥宏后 ≥80 字符匹配空间
-                contentSlice: content.slice(0, 1024),
+                // 2026-06-22 v6.4 Drift Panel C 方案：存完整 content（128KB hard cap），给 diff-locate 反查算法用
+                // 注：旧字段名 contentSlice 已废弃，统一改名 content；ring buffer 5 轮 × 平均 27 块 × ~5KB ≈ 700KB 内存可接受
+                content: content.length > 131072 ? content.slice(0, 131072) : content,
             };
         });
 
@@ -547,6 +651,10 @@ export function getDriftCandidates() { return _getDriftCandidates(); }
 // 2026-06-22 v6.4 Drift Panel · 测试钩子（仅给单测用，业务不依赖）
 export const __testHooks = {
     _stripMacros,
+    _lookupEntryByContent,
+    _longestCommonSubstrLen,
+    _diffRoundsFindVariableRegions,
+    _extractContextWindow,
 };
 
 export const RSI = {
