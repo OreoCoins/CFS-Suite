@@ -618,6 +618,97 @@ export function findHistoryRange(blocks) {
     return _findHistoryRange(blocks);
 }
 
+// === 2026-06-22 v6.4 Drift Panel · 当前角色 active worldbook 全套 entries ===
+// 合并 character_book + primary worldbook + additional worldbooks
+// 每个 entry 加 book 字段标识来源
+// 容错：任何一层失败 → 跳过该层；全失败返回空数组
+// Node 测试环境（无 TavernHelper）→ 返空数组（_lookupEntryByContent 见空数组直接 none，零误报）
+async function _getActiveLoreEntries() {
+    const out = [];
+    let helper, ctx;
+    try {
+        helper = (typeof TavernHelper !== 'undefined') ? TavernHelper : (typeof window !== 'undefined' ? window.TavernHelper : null);
+        ctx = (typeof SillyTavern !== 'undefined') && SillyTavern.getContext && SillyTavern.getContext();
+    } catch {}
+    if (!helper) {
+        if (_debugVerbose) console.warn(`${TAG} _getActiveLoreEntries: TavernHelper 不可用`);
+        return out;
+    }
+
+    // 1. character_book (卡内嵌 worldbook)
+    try {
+        const characters = ctx?.characters;
+        const chid = ctx?.characterId;
+        if (characters && chid != null && characters[chid]?.data?.character_book?.entries) {
+            const charName = characters[chid].name || 'unknown';
+            const cbName = `__character_book__${charName}`;
+            for (const e of characters[chid].data.character_book.entries) {
+                out.push({
+                    book: cbName,
+                    uid: e.uid ?? e.id ?? -1,
+                    comment: e.comment || e.name || '',
+                    content: e.content || '',
+                    position: _normalizeEntryPosition(e),
+                    depth: e.depth ?? 4,
+                    enabled: e.enabled !== false && (e.disable !== true),
+                });
+            }
+        }
+    } catch (e) {
+        if (_debugVerbose) console.warn(`${TAG} character_book 读取失败`, e);
+    }
+
+    // 2. primary + additional worldbooks
+    try {
+        const bind = await Promise.resolve(helper.getCharLorebooks({ name: 'current' }));
+        const bookNames = [];
+        if (bind?.primary) bookNames.push(bind.primary);
+        if (Array.isArray(bind?.additional)) bookNames.push(...bind.additional);
+        for (const bookName of bookNames) {
+            try {
+                const entries = await Promise.resolve(helper.getLorebookEntries(bookName));
+                for (const e of (entries || [])) {
+                    out.push({
+                        book: bookName,
+                        uid: e.uid ?? -1,
+                        comment: e.comment || '',
+                        content: e.content || '',
+                        position: _normalizeEntryPosition(e),
+                        depth: e.depth ?? 4,
+                        enabled: e.enabled !== false,
+                    });
+                }
+            } catch (e2) {
+                if (_debugVerbose) console.warn(`${TAG} 读 worldbook "${bookName}" 失败`, e2);
+            }
+        }
+    } catch (e) {
+        if (_debugVerbose) console.warn(`${TAG} getCharLorebooks 失败`, e);
+    }
+
+    return out;
+}
+
+// 把 entry.position (数字/字符串) + depth 标准化成可读字符串
+// 显示格式：'before_character_definition' / 'at_depth_as_user(depth=N)' 等
+function _normalizeEntryPosition(e) {
+    const p = e.position;
+    if (typeof p === 'string') {
+        if (p === 'at_depth_as_user' || p === 'at_depth_as_system' || p === 'at_depth_as_assistant') {
+            return `${p}(depth=${e.depth ?? 4})`;
+        }
+        return p;
+    }
+    const numToStr = {
+        0: 'before_character_definition',
+        1: 'after_character_definition',
+        2: 'before_author_note',
+        3: 'after_author_note',
+        4: `at_depth(depth=${e.depth ?? 4})`,
+    };
+    return numToStr[p] ?? `unknown(${p})`;
+}
+
 // 2026-06-21 v6 阶段 D：drift candidates 给 PETL 漏扫补充
 // 返回 postHistoryBlocks 中 status='dynamic' 的 contentSlice 数组
 // PETL 拿这些 contentSlice 反查 worldbook entry：哪条 entry 的 content 含某 slice
@@ -665,6 +756,7 @@ export const RSI = {
     analyze: _analyze,
     findHistoryRange: _findHistoryRange,
     getDriftCandidates: _getDriftCandidates, // v6 阶段 D: PETL 漏扫补充入口
+    getActiveLoreEntries: _getActiveLoreEntries, // v6.4 Drift Panel: 反查源数据
     genSimpleOutput: _genSimpleOutput,
     genFullOutput: _genFullOutput,
     resetBuffer: () => { _ringBuffer.length = 0; },

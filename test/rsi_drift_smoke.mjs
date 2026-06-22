@@ -172,4 +172,12 @@ assert.equal(_lookupEntryByContent('', entries).matchType, 'none');
 assert.equal(_lookupEntryByContent(null, entries).matchType, 'none');
 pass('空输入/null 容错');
 
+// ============ Task 5: _getActiveLoreEntries (容错) ============
+console.log('\n=== Task 5: _getActiveLoreEntries (Node 容错) ===');
+const { RSI } = await import('../cfs/modules/rsi.js');
+const r5 = await RSI.getActiveLoreEntries();
+assert.ok(Array.isArray(r5), 'Node 环境应返数组而非抛错');
+assert.equal(r5.length, 0, 'Node 无 TavernHelper → 空数组');
+pass(`Node 无 TavernHelper 容错通过 (返 ${r5.length} 项)`);
+
 console.log(`\n=== 全部 ${testCount} 项断言通过 ===`);
