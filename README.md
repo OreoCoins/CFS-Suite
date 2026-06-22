@@ -26,13 +26,10 @@ CFS Suite 是**霸王扩展**:
 
 ## 📋 v6.2.0 主要改动(2026-06-22)
 
-### 命中率退化根因修复 — 实测 50.8% → **91.5%**(超 v4.9 历史峰值 79.9%)
+### 命中率根因修复 — 实测 50.8% → **91.5%**
 
-**问题**:v4.9 时期同卡同预设峰值命中率 99.93%(重生)/ 加权 79.9%(日常),v5.0/v6.x 重构后退化到 50.8%。
 
-**根因**(读 v4.9 时期施工日志找出):v4.9 PSIS R1 公理是**默认所有 enabled entry 都放 prefix 区,仅含真随机/最近消息宏的"真破坏者"才例外踢 chat 末尾**。v5.0/v6.x 把"动态宏"定义扩太大(EJS `<%%>` / mvu_plot 标签 / `{{getvar::xxx}}` 静态宏 / JSONPatch / 字段风险全当 dynamic),把太多稳定 entry 误判踢到 chat 末尾 → prefix 区缩水 → 命中率上限崩塌 30+pt。
-
-**修法 — PETL v4.9 严格模式**(默认 ON,`localStorage['cfs-suite/petl_v49_strict_mode']` 可关):
+— PETL v4.9 严格模式**(默认 ON,`localStorage['cfs-suite/petl_v49_strict_mode']` 可关):
 
 - `V49_DYNAMIC_PATTERNS` 9 条窄义真破坏者(`lastusermessage` / `lastmessage` / `random` / `roll` / `pick` / `date|time|...` / `format_message_variable::` / `input`)
 - **非真动态** → `before_character_definition / constant=true / role=0 / selective=false`
