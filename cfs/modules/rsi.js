@@ -349,8 +349,8 @@ function _pushFromRealRequest(messages, sourceLabel) {
                 role: (m && m.role) || 'unknown',
                 len: content.length,
                 hash: _fnv1a8(content),
-                // 2026-06-21 v6 阶段 D：存前 240 字符让 PETL.getDriftCandidates 反查 worldbook entry
-                contentSlice: content.slice(0, 240),
+                // 2026-06-22 v6.4: 扩 240→1024，给 RSI Drift Panel 反查 worldbook entry 留剥宏后 ≥80 字符匹配空间
+                contentSlice: content.slice(0, 1024),
             };
         });
 
