@@ -1210,6 +1210,15 @@ function _renderPanel(panel) {
     html += '<button id="cfs-rsi-copy-full" style="padding:2px 10px;font-size:10px;width:auto;margin:0">📋 复制全表</button>';
     html += '</div>';
     html += `<div class="hint" style="margin-top:4px">${rsiRounds === 0 ? '尚未捕获任何请求；发一条消息后即可看到结构' : `已捕获 ${rsiRounds} 轮请求（buffer 上限 5）`}</div>`;
+
+    // 2026-06-22 v6.4 Drift Panel — 精确定位 prefix 区每轮变化的 worldbook entry (仅报告不修改)
+    html += '<div style="border-top:1px dashed #444;margin-top:10px;padding-top:8px">';
+    html += '<details style="margin:0"><summary style="cursor:pointer;color:#ffa726;font-size:12px;font-weight:bold;padding:2px 0">🔬 cache 波动检测（点击展开）</summary>';
+    html += '<div id="cfs-rsi-drift-panel" style="margin-top:6px;font-size:11px;color:#cfcfd5">（点击上方展开后扫描；首次约 1-3 秒）</div>';
+    html += '</details>';
+    html += '<div class="hint" style="margin-top:2px;color:#9aa0a6;font-size:10px">⚠️ 仅诊断报告，CFS 不会自动改 worldbook。改不改、怎么改由你决定。</div>';
+    html += '</div>';
+
     html += '</div>';
 
     // 2026-06-21 v6 PETL section — Prompt Entry Takeover Layer
@@ -1601,6 +1610,41 @@ function _renderPanel(panel) {
         const rsi = window.CFS4?.RSI;
         const el = panel.querySelector('#cfs-rsi-full');
         if (el && rsi?.genFullOutput) el.textContent = rsi.genFullOutput();
+    });
+
+    // 2026-06-22 v6.4 Drift Panel: 懒加载 + [cfs:ignore] 点击复制
+    const driftPanelEl = panel.querySelector('#cfs-rsi-drift-panel');
+    const driftDetails = driftPanelEl?.closest('details');
+    let _driftLoaded = false;
+    driftDetails?.addEventListener('toggle', async () => {
+        if (!driftDetails.open || _driftLoaded) return;
+        const rsi = window.CFS4?.RSI;
+        if (!rsi?.genDriftPanel) {
+            driftPanelEl.innerHTML = '<div style="color:#e07b7b">RSI 模块未挂载或版本过旧 (需 v2.2+)</div>';
+            return;
+        }
+        driftPanelEl.innerHTML = '<div style="color:#9aa0a6">扫描中 ...（首次约 1-3 秒）</div>';
+        try {
+            const driftHtml = await rsi.genDriftPanel();
+            driftPanelEl.innerHTML = driftHtml;
+            _driftLoaded = true;
+            // 绑定 [cfs:ignore] 复制
+            driftPanelEl.querySelectorAll('.cfs-drift-copy').forEach(el => {
+                el.addEventListener('click', async (ev) => {
+                    ev.stopPropagation();
+                    const text = el.getAttribute('data-copy') || '[cfs:ignore]';
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        _pushLog(panel, '📋 已复制 ' + text, 'success');
+                    } catch (e) {
+                        _pushLog(panel, '复制失败，请手动选中文本: ' + (e?.message || e), 'warn');
+                    }
+                });
+            });
+        } catch (e) {
+            driftPanelEl.innerHTML = `<div style="color:#e07b7b">扫描失败: ${e?.message || e}</div>`;
+            console.warn('[CFS-Suite/capsule] drift panel 渲染失败', e);
+        }
     });
 
     // 异步刷新 CFS-MVU 状态
