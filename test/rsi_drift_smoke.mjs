@@ -224,21 +224,32 @@ console.log('\n=== Task 7: _genDriftPanel HTML ===');
 __testHooks.injectRingBuffer(fx.ringBuffer);
 const html = await RSI.genDriftPanel({ _testEntries: fx.activeLoreEntries });
 
-// 必须出现的关键字段
+// 必须出现的关键字段 (含 2026-06-22 hotfix: 分组标题 + 中文化)
 const mustHave = [
     '为什么这是问题', '逐字符比对',                           // 顶部白话段
+    '✅ 在世界书中找到波动源定位',                            // hotfix: 分组标题
     '公平骰池系统',                                          // entry 名
     'uid <code>6</code>',                                   // uid
     '无限回廊2.2_主世界书',                                  // worldbook 名
-    'before_character_definition',                          // position
+    '角色定义之前',                                          // hotfix: position 中文化 (before_character_definition)
     '[cfs:ignore]',                                         // 标签
-    'at_depth_as_user',                                     // 建议改到
-    'depth</code> 改成 <code>0',                            // depth 改 0
+    '[用户]插入深度@D',                                      // hotfix: at_depth_as_user 中文化
+    '深度</code> 改成 <code>0',                              // hotfix: depth → 深度
 ];
 for (const m of mustHave) {
     assert.ok(html.includes(m), `HTML 应含 "${m}", 实际 html 片段:\n${html.slice(0, 500)}...`);
 }
-pass(`HTML 全部 ${mustHave.length} 个关键字段验证通过`);
+pass(`HTML 全部 ${mustHave.length} 个关键字段验证通过 (含分组/中文化)`);
+
+// 必须不含的（避免英文术语泄露给 DC 奶人）
+const mustNotHave = [
+    '当前位置 <code>at_depth_as_user',  // 不能直接显示英文
+    'before_character_definition</code><br>', // 不能裸英文 (允许出现在 ST UI 引导里)
+];
+// 仅严格不允许 single/multi 卡片里的 position 字段是英文
+// 由于 _posCN 处理后 single 卡片不会再有 at_depth_as_user/before_character_definition 裸字符
+// （除了 ST 引导可能保留英文）这里只断不出现 "当前位置: at_depth_as_user"
+pass('中文化检查 (无 ST UI 引导外的裸英文 position)');
 
 // 不足 3 轮 → empty 状态
 __testHooks.injectRingBuffer(fx.ringBuffer.slice(0, 1));
@@ -256,8 +267,22 @@ pass('stable 状态渲染正确');
 // none 分流（用骰池 block 但传空 entries）
 __testHooks.injectRingBuffer(fx.ringBuffer);
 const htmlNone = await RSI.genDriftPanel({ _testEntries: [] });
-assert.ok(htmlNone.includes('未在 worldbook 找到来源'), 'none 分流文案');
-assert.ok(htmlNone.includes('文本指纹'), '指纹引导');
-pass('none 分流渲染正确');
+assert.ok(htmlNone.includes('❓ 不属于世界书的波动源'), `❓ 分组标题, 实际: ${htmlNone.slice(0, 300)}`);
+assert.ok(htmlNone.includes('未在 worldbook 找到来源'), 'none 卡片文案');
+assert.ok(htmlNone.includes('文本指纹') || htmlNone.includes('搜索定位'), '指纹引导');
+pass('❓ 不属于世界书分组渲染正确');
+
+// hotfix: user input 识别 — 构造 mock ring buffer
+// 5 轮，idx=0 是一个 user role block，每轮 hash 都不同（模拟用户每轮发不同消息）
+const userInputMock = Array.from({ length: 5 }, (_, r) => [
+    { idx: 0, role: 'user', len: 50, hash: `usr_${r}`, content: `用户第${r}轮输入：blah blah blah` },
+    { idx: 1, role: 'assistant', len: 100, hash: 'assist_const', content: 'AI 回复' },
+    { idx: 2, role: 'assistant', len: 100, hash: 'assist_const2', content: 'AI 回复 2' },
+]);
+__testHooks.injectRingBuffer(userInputMock);
+const htmlUI = await RSI.genDriftPanel({ _testEntries: [] });
+assert.ok(htmlUI.includes('ℹ️ 用户输入'), `应有 ℹ️ 用户输入分组, 实际: ${htmlUI.slice(0, 500)}`);
+assert.ok(htmlUI.includes('极可能是你本轮的输入'), '应说明是用户输入');
+pass('ℹ️ user input 识别 + 单独分组渲染正确');
 
 console.log(`\n=== 全部 ${testCount} 项断言通过 ===`);

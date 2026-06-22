@@ -764,6 +764,14 @@ async function _findUnstableEntries(opts) {
         const window = _extractContextWindow(latestContent, stablePrefixLen, stableSuffixLen, 2048);
         const lookup = _lookupEntryByContent(window, entries);
 
+        // 2026-06-22 hotfix: user input 识别 — 排除"用户当前轮输入"误报为污染
+        // 判定: matchType=none + role=user + distinctHashes==observedRounds (每轮全新 hash, 即每轮新内容)
+        // 骰池/动态 entry 虽然也每轮变, 但能在 worldbook 反查到 (matchType !== 'none'), 不会撞这个规则
+        const isLikelyUserInput = (
+            lookup.matchType === 'none' &&
+            blk.role === 'user' &&
+            u.distinctHashes === u.observedRounds
+        );
         candidates.push({
             blockIdx: u.idx,
             role: blk.role,
@@ -777,6 +785,7 @@ async function _findUnstableEntries(opts) {
             matchType: lookup.matchType,
             hits: lookup.hits,
             fingerprint: lookup.fingerprint,
+            classification: isLikelyUserInput ? 'user_input' : (lookup.matchType === 'none' ? 'unknown' : 'worldbook'),
         });
     }
 
@@ -791,6 +800,89 @@ function _escapeHtmlDrift(s) {
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// position 英文 → ST 中文版选项名 (用户照搬 ST 中文 UI)
+const _POS_CN = {
+    'before_character_definition': '角色定义之前',
+    'after_character_definition': '角色定义之后',
+};
+function _posCN(posStr) {
+    if (typeof posStr !== 'string') return String(posStr || '');
+    if (posStr.startsWith('at_depth_as_user')) {
+        const m = posStr.match(/depth=(\d+)/);
+        const d = m ? m[1] : '?';
+        return `[用户]插入深度@D（深度=${d}）`;
+    }
+    if (posStr.startsWith('at_depth_as_system')) {
+        const m = posStr.match(/depth=(\d+)/);
+        return `[系统]插入深度@D（深度=${m ? m[1] : '?'}）`;
+    }
+    if (posStr.startsWith('at_depth_as_assistant')) {
+        const m = posStr.match(/depth=(\d+)/);
+        return `[角色]插入深度@D（深度=${m ? m[1] : '?'}）`;
+    }
+    return _POS_CN[posStr] || posStr;
+}
+
+// 渲染单个候选卡片 (single / multi 命中) — worldbook 找到的
+function _renderWorldbookCard(c, idx) {
+    const lines = [];
+    lines.push('<div class="cfs-drift-card" style="border:1px solid #444;border-radius:4px;padding:10px;margin:6px 0;background:#161618">');
+    if (c.matchType === 'single') {
+        const h = c.hits[0];
+        lines.push(`<div style="color:#ffa726;font-weight:bold;margin-bottom:6px">⚠️ 「${_escapeHtmlDrift(h.comment || '(无名条目)')}」</div>`);
+        lines.push('<div style="font-size:11px;color:#cfcfd5;line-height:1.7">');
+        lines.push(`📍 <b>在哪</b>：${_escapeHtmlDrift(h.book)} / uid <code>${_escapeHtmlDrift(String(h.uid))}</code><br>`);
+        lines.push(`📊 <b>现状</b>：当前位置 <code>${_escapeHtmlDrift(_posCN(h.position))}</code><br>`);
+        lines.push(`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 跨 ${c.observedRounds} 轮观察 → 出现 ${c.distinctHashes} 个不同 hash<br>`);
+        lines.push(`💸 <b>损失</b>：变化区约 ${c.variableLen.toLocaleString()} 字符，块总长 ${c.len.toLocaleString()} 字符<br>`);
+        lines.push(`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 反查匹配子串 ${h.matchLen} 字符（置信度高）`);
+        lines.push('</div>');
+        lines.push('<div style="margin-top:8px;padding:6px 8px;background:#0e0e0f;border-radius:3px;font-size:11px;color:#9ed28a;line-height:1.7">');
+        lines.push('🔧 <b>怎么改（3 步）</b><br>');
+        lines.push(`① ST → 角色卡 → 世界书 → 找到 <code>${_escapeHtmlDrift(h.book)}</code> 里 uid <code>${_escapeHtmlDrift(String(h.uid))}</code> 这条<br>`);
+        lines.push(`② 在条目【<b>名称</b>】最前面加：<code class="cfs-drift-copy" data-copy="[cfs:ignore]" style="cursor:pointer;background:#2a2a2e;padding:1px 5px;border-radius:2px" title="点击复制">[cfs:ignore]</code><br>`);
+        lines.push(`③ 位置改成 <code>[用户]插入深度@D</code>，<code>深度</code> 改成 <code>0</code>，保存`);
+        lines.push('</div>');
+    } else if (c.matchType === 'multi') {
+        lines.push(`<div style="color:#ffa726;font-weight:bold;margin-bottom:6px">⚠️ 检测到 ${c.hits.length} 条候选 — 请逐条核对</div>`);
+        lines.push('<div style="font-size:11px;color:#cfcfd5;line-height:1.7">CFS 无法精确判断元凶（多条 entry 内容相似 / 合并蓝灯 / 复制粘贴）。请逐条打开核对，对实际生效的那条做 3 步修复（加 [cfs:ignore] + 位置改 [用户]插入深度@D + 深度 0）：</div>');
+        lines.push('<ul style="font-size:11px;color:#cfcfd5;margin:4px 0 0 16px;padding:0">');
+        for (const h of c.hits) {
+            lines.push(`<li>「${_escapeHtmlDrift(h.comment || '(无名)')}」 — ${_escapeHtmlDrift(h.book)} / uid <code>${_escapeHtmlDrift(String(h.uid))}</code> / 位置 <code>${_escapeHtmlDrift(_posCN(h.position))}</code> / 匹配 ${h.matchLen}c</li>`);
+        }
+        lines.push('</ul>');
+    }
+    lines.push('</div>');
+    return lines.join('\n');
+}
+
+// 渲染单个非 worldbook 候选 (matchType=none, 含预设/角色卡/扩展)
+function _renderNonWorldbookCard(c) {
+    const lines = [];
+    lines.push('<div class="cfs-drift-card" style="border:1px solid #444;border-radius:4px;padding:10px;margin:6px 0;background:#161618">');
+    lines.push(`<div style="color:#ffa726;font-weight:bold;margin-bottom:6px">⚠️ 未在 worldbook 找到来源 (block #${c.blockIdx}, ${c.role} role)</div>`);
+    lines.push('<div style="font-size:11px;color:#cfcfd5;line-height:1.7">这条波动不来自当前角色绑定的 worldbook，可能来自：<br>');
+    lines.push('• <b>预设管理器</b>中的 prompt（含 <code>{{lastusermessage}}</code> / <code>{{datetime}}</code> 等动态宏）<br>');
+    lines.push('• <b>角色卡</b>的 description / first_mes / scenario 字段<br>');
+    lines.push('• <b>第三方扩展</b>往 chat 拼装时注入<br>');
+    lines.push('复制下面这段文本指纹，去预设管理器或角色卡编辑器搜索定位：</div>');
+    lines.push(`<pre style="background:#0e0e0f;border:1px solid #333;border-radius:3px;padding:6px 8px;font-size:10px;color:#9ed28a;white-space:pre-wrap;word-break:break-all;margin:6px 0 0;max-height:120px;overflow:auto">${_escapeHtmlDrift(c.fingerprint)}</pre>`);
+    lines.push('</div>');
+    return lines.join('\n');
+}
+
+// 渲染单个用户输入候选 (matchType=none + role=user + 每轮全新 hash) — 正常无需处理
+function _renderUserInputCard(c) {
+    const lines = [];
+    lines.push('<div class="cfs-drift-card" style="border:1px solid #2e4d2e;border-radius:4px;padding:8px 10px;margin:6px 0;background:#0f1a0f">');
+    lines.push(`<div style="color:#9ed28a;font-size:11px;line-height:1.6">ℹ️ block #${c.blockIdx} (${c.role} role) — 每轮全新内容 + worldbook 中找不到 + user 角色 → <b>极可能是你本轮的输入</b>。每轮变是正常 chat 行为，无需处理。</div>`);
+    lines.push(`<details style="margin-top:4px"><summary style="cursor:pointer;color:#9aa0a6;font-size:10px">展开看内容指纹</summary>`);
+    lines.push(`<pre style="background:#0e0e0f;border:1px solid #333;border-radius:3px;padding:4px 6px;font-size:10px;color:#9aa0a6;white-space:pre-wrap;word-break:break-all;margin:4px 0 0;max-height:80px;overflow:auto">${_escapeHtmlDrift(c.fingerprint)}</pre>`);
+    lines.push(`</details>`);
+    lines.push('</div>');
+    return lines.join('\n');
+}
+
 async function _genDriftPanel(opts) {
     const r = await _findUnstableEntries(opts);
     if (r.status === 'insufficient') {
@@ -800,54 +892,52 @@ async function _genDriftPanel(opts) {
         return `<div class="cfs-drift-ok" style="color:#9ed28a;font-size:11px;padding:8px 4px">✅ 前缀区没有"每轮变"的条目，cache 命中率已达架构上限。</div>`;
     }
 
+    // 三路分组
+    const worldbookGroup = r.candidates.filter(c => c.classification === 'worldbook');
+    const unknownGroup   = r.candidates.filter(c => c.classification === 'unknown');
+    const userInputGroup = r.candidates.filter(c => c.classification === 'user_input');
+
+    // 实际"需要处理"数 = worldbook + unknown (user input 不算污染)
+    const actionableCount = worldbookGroup.length + unknownGroup.length;
+
     const lines = [];
     // 顶部"为什么"段（DC 奶人友好白话）
     lines.push('<div class="cfs-drift-why" style="background:#1a1a1f;border-left:3px solid #ffa726;padding:8px 10px;margin:4px 0;color:#cfcfd5;font-size:11px;line-height:1.6">');
     lines.push(`<strong style="color:#ffa726">⚠️ 为什么这是问题</strong><br>`);
-    lines.push(`检测到 ${r.candidates.length} 处 prefix 区内容每轮都在变。<br>`);
+    if (actionableCount > 0) {
+        lines.push(`检测到 ${actionableCount} 处 prefix 区内容每轮都在变。<br>`);
+    } else {
+        lines.push(`仅检测到用户输入波动（正常无需处理）。<br>`);
+    }
     lines.push(`DeepSeek / Claude 的 cache 是「<u>逐字符比对</u>」 — 前缀里任何一个字一变，<br>`);
     lines.push(`它后面的所有内容（哪怕完全没变）都会 cache miss。<br>`);
     lines.push(`<em>在前缀区有"每轮变"的条目 = 后面全部白送钱。</em>`);
     lines.push('</div>');
 
-    for (let i = 0; i < r.candidates.length; i++) {
-        const c = r.candidates[i];
-        lines.push('<div class="cfs-drift-card" style="border:1px solid #444;border-radius:4px;padding:10px;margin:6px 0;background:#161618">');
-        if (c.matchType === 'single') {
-            const h = c.hits[0];
-            lines.push(`<div style="color:#ffa726;font-weight:bold;margin-bottom:6px">⚠️ 「${_escapeHtmlDrift(h.comment || '(无名条目)')}」</div>`);
-            lines.push('<div style="font-size:11px;color:#cfcfd5;line-height:1.7">');
-            lines.push(`📍 <b>在哪</b>：${_escapeHtmlDrift(h.book)} / uid <code>${_escapeHtmlDrift(String(h.uid))}</code><br>`);
-            lines.push(`📊 <b>现状</b>：当前位置 <code>${_escapeHtmlDrift(h.position)}</code><br>`);
-            lines.push(`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 跨 ${c.observedRounds} 轮观察 → 出现 ${c.distinctHashes} 个不同 hash<br>`);
-            lines.push(`💸 <b>损失</b>：变化区约 ${c.variableLen.toLocaleString()} 字符，块总长 ${c.len.toLocaleString()} 字符<br>`);
-            lines.push(`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 反查匹配子串 ${h.matchLen} 字符（置信度高）`);
-            lines.push('</div>');
-            lines.push('<div style="margin-top:8px;padding:6px 8px;background:#0e0e0f;border-radius:3px;font-size:11px;color:#9ed28a;line-height:1.7">');
-            lines.push('🔧 <b>怎么改（3 步）</b><br>');
-            lines.push(`① ST → 角色卡 → 世界书 → 找到 <code>${_escapeHtmlDrift(h.book)}</code> 里 uid <code>${_escapeHtmlDrift(String(h.uid))}</code> 这条<br>`);
-            lines.push(`② 在条目【<b>名称</b>】最前面加：<code class="cfs-drift-copy" data-copy="[cfs:ignore]" style="cursor:pointer;background:#2a2a2e;padding:1px 5px;border-radius:2px" title="点击复制">[cfs:ignore]</code><br>`);
-            lines.push(`③ <code>position</code> 改成 <code>at_depth_as_user</code>，<code>depth</code> 改成 <code>0</code>，保存`);
-            lines.push('</div>');
-        } else if (c.matchType === 'multi') {
-            lines.push(`<div style="color:#ffa726;font-weight:bold;margin-bottom:6px">⚠️ 检测到 ${c.hits.length} 条候选 — 请逐条核对</div>`);
-            lines.push('<div style="font-size:11px;color:#cfcfd5;line-height:1.7">CFS 无法精确判断元凶（多条 entry 内容相似 / 合并蓝灯 / 复制粘贴）。请逐条打开核对，对实际生效的那条做 3 步修复（加 [cfs:ignore] + position 改 at_depth_as_user + depth 0）：</div>');
-            lines.push('<ul style="font-size:11px;color:#cfcfd5;margin:4px 0 0 16px;padding:0">');
-            for (const h of c.hits) {
-                lines.push(`<li>「${_escapeHtmlDrift(h.comment || '(无名)')}」 — ${_escapeHtmlDrift(h.book)} / uid <code>${_escapeHtmlDrift(String(h.uid))}</code> / pos <code>${_escapeHtmlDrift(h.position)}</code> / 匹配 ${h.matchLen}c</li>`);
-            }
-            lines.push('</ul>');
-        } else {
-            lines.push(`<div style="color:#ffa726;font-weight:bold;margin-bottom:6px">⚠️ 未在 worldbook 找到来源</div>`);
-            lines.push('<div style="font-size:11px;color:#cfcfd5;line-height:1.7">这条波动 (block #' + c.blockIdx + ', ' + c.role + ' role) 不来自当前角色绑定的 worldbook，可能来自：<br>');
-            lines.push('• <b>预设管理器</b>中的 prompt（含 <code>{{lastusermessage}}</code> / <code>{{datetime}}</code> 等动态宏）<br>');
-            lines.push('• <b>角色卡</b>的 description / first_mes / scenario 字段<br>');
-            lines.push('• <b>第三方扩展</b>往 chat 拼装时注入<br>');
-            lines.push('复制下面这段文本指纹，去预设管理器或角色卡编辑器搜索定位：</div>');
-            lines.push(`<pre style="background:#0e0e0f;border:1px solid #333;border-radius:3px;padding:6px 8px;font-size:10px;color:#9ed28a;white-space:pre-wrap;word-break:break-all;margin:6px 0 0;max-height:120px;overflow:auto">${_escapeHtmlDrift(c.fingerprint)}</pre>`);
+    // 第一组：worldbook 中找到的（single + multi）
+    if (worldbookGroup.length > 0) {
+        lines.push(`<div style="margin-top:10px;padding:4px 8px;background:#1f2a1f;border-left:3px solid #9ed28a;color:#9ed28a;font-size:11px;font-weight:bold">✅ 在世界书中找到波动源定位（${worldbookGroup.length} 处）</div>`);
+        for (const c of worldbookGroup) {
+            lines.push(_renderWorldbookCard(c));
         }
-        lines.push('</div>');
     }
+
+    // 第二组：worldbook 中没找到的（unknown，含预设/角色卡/扩展）
+    if (unknownGroup.length > 0) {
+        lines.push(`<div style="margin-top:10px;padding:4px 8px;background:#2a1f1f;border-left:3px solid #e07b7b;color:#e07b7b;font-size:11px;font-weight:bold">❓ 不属于世界书的波动源（${unknownGroup.length} 处 — 来自预设/角色卡/扩展）</div>`);
+        for (const c of unknownGroup) {
+            lines.push(_renderNonWorldbookCard(c));
+        }
+    }
+
+    // 第三组：用户输入（正常，单独标注不当警告）
+    if (userInputGroup.length > 0) {
+        lines.push(`<div style="margin-top:10px;padding:4px 8px;background:#1a2a1a;border-left:3px solid #6a8a6a;color:#9ed28a;font-size:11px;font-weight:bold">ℹ️ 用户输入（${userInputGroup.length} 处 — 正常，无需处理）</div>`);
+        for (const c of userInputGroup) {
+            lines.push(_renderUserInputCard(c));
+        }
+    }
+
     return lines.join('\n');
 }
 
