@@ -119,17 +119,7 @@ async function _runCleanup(opts) {
         }
         if (result.cleanedCount > 0) {
             console.log(TAG, `✅ 清理完成: ${result.cleanedCount} 条 entry 移除 [CFS4_AUTO] 标签`, result.books);
-            try {
-                if (typeof toastr !== 'undefined' && toastr.info) {
-                    const bookList = Object.keys(result.books).join(' / ');
-                    toastr.info(
-                        `CFS v6.4: 已静默清掉 ${result.cleanedCount} 条 worldbook entry 的 [CFS4_AUTO] 残留标签\n` +
-                        `(${bookList})\n` +
-                        `如卡内嵌 character_book 还有 [CFS4_AUTO]，需要删卡重导 — 聊天存档不丢。`,
-                        'CFS-Suite v6.4 启动清理', { timeOut: 15000, extendedTimeOut: 5000 }
-                    );
-                }
-            } catch (_e) {}
+            // 2026-06-23 用户拍板：CFS toast 已经太多，cleanup 完全静默，只 console.log
         } else {
             console.log(TAG, '✓ 无需清理 (没有 [CFS4_AUTO] 标签)');
         }
