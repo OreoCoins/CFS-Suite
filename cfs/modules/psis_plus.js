@@ -72,7 +72,14 @@ void _r;
    localStorage.setItem(PSIS_PLUS_LS_KEY, JSON.stringify(arr));
    return true;
   } catch (e) {
+   // 2026-06-22 v6.2.0 · 写失败显式提示（避免静默吞异常导致用户看不到 AUTO 接管记录）
+   //   常见原因：LS quota 超出（before_full_preset 大 dump × 10 条可能撞 5MB 限制）
    console.warn('[PSIS+] localStorage write failed', e);
+   try {
+    if (typeof toastr !== 'undefined' && toastr.error) {
+     toastr.error('CFS PSIS+ 操作记录写入失败（可能 LS 容量超 5MB）。控制台见详细错误。可在 F12 跑 localStorage.removeItem("' + PSIS_PLUS_LS_KEY + '") 清空历史后重试。', 'CFS-Suite PSIS+', { timeOut: 12000 });
+    }
+   } catch (_e) {}
    return false;
   }
  }
@@ -150,6 +157,126 @@ void _r;
   return -1;
  }
 
+ // === v6.2.0 新增 · 启发式判定 unknown 块是否可前移 ===
+ // 背景（2026-06-22 plan temporal-swan）：
+ //   双人成行 v7.0 等预设把 8 个 UUID-identifier 的 user-role prompt 排在 chatHistory 之后。
+ //   PSIS_BLOCK_REGISTRY 只识别 11 个 ST 内置 identifier，UUID 块全部归 unknown → 旧版主动跳过。
+ //   这些 user-role prompt 多数是稳定的思维链/输出格式约束，前移可大幅提升 prompt cache 命中率。
+ // 设计：保守白名单 + 多层黑名单逐项排除，所有有疑议的块走 'uncertain' 不前移。
+
+ // 真"全文出现即拒"的动态宏（渲染逐轮变化，无字面引用场景）
+ //   2026-06-22 v6.2.0 真机调参（双人成行 v7.0）：原 plan 把 `<user> <user_input> <chathistory>`
+ //   也列入是过保守 — 这些在大块提示词里常见字面引用（思维链/输出格式），全文匹配会误杀。
+ //   结构性禁令交给 _psisPlusTagsBalanced（独立成行 + 短块孤立标签）处理。
+ var SKIP_PIN_MARKERS = [
+  '{{lastusermessage}}',
+  '{{lastmessage}}',
+  '<STABLE_BATCH',
+ ];
+
+ // 软拒动态宏（含 → uncertain 而非 keep_after）：
+ //   `{{user}}`/`{{char}}` 在 ST 中按 persona/char 名渲染，切 persona 时 prefix cache 断；
+ //   但跨轮在同一会话内稳定。保守 uncertain（不前移，但不像硬拒那么绝对）。
+ var SOFT_SKIP_MARKERS = [
+  '{{user}}',
+  '{{char}}',
+ ];
+
+ // 反查 oai.prompts[] 拿 prompt entry 完整定义（identifier → entry）
+ function _psisPlusFindPromptEntry(identifier) {
+  var oai = _psisPlusGetOaiSettings();
+  if (!oai || !Array.isArray(oai.prompts)) return null;
+  for (var i = 0; i < oai.prompts.length; i++) {
+   if (oai.prompts[i] && oai.prompts[i].identifier === identifier) return oai.prompts[i];
+  }
+  return null;
+ }
+
+ // 检测块内 XML 风格标签是否真正"结构性不配对"
+ // 06-21 历史教训（D:\Silly\LOG\2026-06-21-rsi-l1l2l3-impl-log.md）：
+ //   把孤立的 </chathistory> 闭合标签从 post-history 前移，破坏配对结构 → 模型输出中断。
+ //
+ // 2026-06-22 实测调整（双人成行 v7.0 思维链/输出格式）：
+ //   旧实现用全文 regex 数标签，把 `<user>`/`<foxp>` 等字面引用（嵌在文本中、`$()` 内）
+ //   误识别为结构标签 → 配对失败 → 大块稳定 entry 被错误拒绝。
+ //
+ // 新规则两步走：
+ //   1) 整块短（< 80 字符）且 trim 后只剩一个孤立 `<tag>` 或 `</tag>` → 拒（防 14B `</chathistory>`）
+ //   2) 否则只数"独立成行 / 块首尾"的真结构标签（前导可缩进），字面引用不计入
+ //      中文标签名（`<自定义标签>` 等）regex 不匹配 → 自动忽略，无副作用
+ function _psisPlusTagsBalanced(content) {
+  if (!content) return true;
+  var trimmed = content.trim();
+  // (1) 极短块仅含一个孤立标签
+  if (trimmed.length < 80 && /^<\/?[a-zA-Z_][\w-]*(?:\s+[^>]*)?>\s*$/.test(trimmed)) {
+   return false;
+  }
+  function nameOf(raw) {
+   var m = raw.match(/<\/?([a-zA-Z_][\w-]*)/);
+   return m ? m[1].toLowerCase() : '';
+  }
+  // (2) 仅数独立成行的真结构标签（行首允许缩进，行尾要 \n 或 EOF）
+  var openLine = content.match(/(?:^|\n)[ \t]*<[a-zA-Z_][\w-]*(?:\s+[^>]*)?>[ \t]*(?=\n|$)/g) || [];
+  var closeLine = content.match(/(?:^|\n)[ \t]*<\/[a-zA-Z_][\w-]*>[ \t]*(?=\n|$)/g) || [];
+  // self-close `<tag/>` 过滤
+  openLine = openLine.filter(function (t) { return !/\/\s*>\s*$/.test(t); });
+  var openCounts = {}, closeCounts = {};
+  for (var i = 0; i < openLine.length; i++) {
+   var n = nameOf(openLine[i]);
+   if (n) openCounts[n] = (openCounts[n] || 0) + 1;
+  }
+  for (var j = 0; j < closeLine.length; j++) {
+   var n2 = nameOf(closeLine[j]);
+   if (n2) closeCounts[n2] = (closeCounts[n2] || 0) + 1;
+  }
+  var allNames = Object.keys(openCounts).concat(Object.keys(closeCounts));
+  for (var k = 0; k < allNames.length; k++) {
+   var n3 = allNames[k];
+   if ((openCounts[n3] || 0) !== (closeCounts[n3] || 0)) return false;
+  }
+  return true;
+ }
+
+ // 启发式判定：unknown 块是否可安全前移
+ //   返回 'stable_move' | 'keep_after' | 'uncertain'
+ // 注意：{{getvar::xxx}} 是 ST 模板宏（渲染稳定）允许通过；getvar(xxx) 是 JS 函数式（不稳定）拒绝
+ function _psisPlusJudgeUnknown(identifier, promptEntry) {
+  var content = (promptEntry && promptEntry.content) || '';
+  var name = (promptEntry && promptEntry.name) || '';
+
+  // Step A · 显式 comment marker（最高优先级，用户逃生口）
+  if (/\[cfs:stable\]/i.test(name) || /\[cfs:stable\]/i.test(content)) return 'stable_move';
+  if (/\[cfs:keep-after-history\]/i.test(name) || /\[cfs:ignore\]/i.test(name)) return 'keep_after';
+
+  // Step B · 硬拒名单（真动态宏，全文匹配即拒）
+  for (var i = 0; i < SKIP_PIN_MARKERS.length; i++) {
+   if (content.indexOf(SKIP_PIN_MARKERS[i]) >= 0) return 'keep_after';
+  }
+
+  // Step C · XML 标签配对（独立成行 + 短块孤立标签判定）
+  if (!_psisPlusTagsBalanced(content)) return 'keep_after';
+
+  // Step D · 动态宏（区分 ST 模板宏 vs JS 函数式）
+  if (/\{\{random\b/i.test(content)) return 'uncertain';
+  if (/\{\{roll\b/i.test(content)) return 'uncertain';
+  if (/\{\{(date|time|datetime)\}\}/i.test(content)) return 'uncertain';
+  if (/getvar\s*\(/i.test(content)) return 'uncertain';
+  if (/<%[^%]*%>/.test(content)) return 'uncertain';
+  // Step D-soft · persona/char 占位（含字面 {{user}}/{{char}} → 切 persona 时 prefix cache 断风险）
+  for (var si = 0; si < SOFT_SKIP_MARKERS.length; si++) {
+   if (content.indexOf(SOFT_SKIP_MARKERS[si]) >= 0) return 'uncertain';
+  }
+
+  // Step E · 长度阈值（小块前移收益不抵风险）
+  if (content.length < 200) return 'uncertain';
+
+  // Step F · role 必须是 user 或 system
+  var role = promptEntry && promptEntry.role;
+  if (role !== 'user' && role !== 'system') return 'uncertain';
+
+  return 'stable_move';
+ }
+
  // === Scan：列出违规 + 计算重排目标 ===
  function _psisPlusScan() {
   var oai = _psisPlusGetOaiSettings();
@@ -174,8 +301,26 @@ void _r;
    var id = item.identifier;
    var reg = PSIS_BLOCK_REGISTRY[id];
    if (!reg) {
-    // 未知 identifier：跳过 + 记录
-    skipped.push({ identifier: id, index: k, type: 'unknown', reason: 'not_in_registry' });
+    // 2026-06-22 v6.2.0 · 未知 identifier 走启发式判定（旧版"全跳过"是命中率天花板根因）
+    var promptEntry = _psisPlusFindPromptEntry(id);
+    var verdict = _psisPlusJudgeUnknown(id, promptEntry);
+    if (verdict === 'stable_move') {
+     violations.push({
+      identifier: id,
+      type: 'auto_unknown',
+      currentIndex: k,
+      enabled: item.enabled !== false,
+      promptName: promptEntry && promptEntry.name,
+      contentLen: (promptEntry && promptEntry.content) ? promptEntry.content.length : 0,
+      judgedBy: 'heuristic',
+     });
+    } else {
+     skipped.push({
+      identifier: id, index: k, type: 'unknown',
+      reason: verdict,
+      promptName: promptEntry && promptEntry.name,
+     });
+    }
     continue;
    }
    if (reg.mustBeBeforeHistory === true) {
@@ -250,7 +395,12 @@ void _r;
  // 关键修正：用 pm.getCompletionPresetByName(name) 拿完整预设对象（含 extensions / regex_script_data 等用户字段）
  // 再用 pm.savePreset(name, completeData, {skipUpdate:true}) 整体落盘，后端无过滤
  // 这样所有非 prompt_order 字段（含正则）原样保留
- async function _psisPlusRepair(planOverride) {
+ //
+ // 2026-06-22 v6.2.0 · 新增 ctxMeta 参数：
+ //   { source: 'manual'|'passive_scan'|'oai_preset_changed_after', violations: scan.violations }
+ //   snapshot 会带 source + affected_detail（含 type/promptName/contentLen/from/to/judgedBy）
+ //   旧调用 _psisPlusRepair(plan) 仍兼容（ctxMeta 缺省时 affected_detail 仅含 from/to）
+ async function _psisPlusRepair(planOverride, ctxMeta) {
   if (_psisPlusOpLock) {
    return { ok: false, reason: 'busy' };
   }
@@ -263,6 +413,31 @@ void _r;
 
    var plan = planOverride || _psisPlusBuildPlan(scan);
    if (!plan) return { ok: false, reason: 'plan_build_failed' };
+
+   // 2026-06-22 v6.2.0 · 富化 affected_detail，让操作记录能展示启发式接管细节
+   //   优先从 ctxMeta.violations 拿（外部传入的最新 scan），缺省时回退到本次 scan.violations
+   var violationsRef = (ctxMeta && Array.isArray(ctxMeta.violations) && ctxMeta.violations.length > 0)
+    ? ctxMeta.violations
+    : scan.violations;
+   var violationByIdent = {};
+   for (var vi = 0; vi < violationsRef.length; vi++) {
+    var vv = violationsRef[vi];
+    if (vv && vv.identifier) violationByIdent[vv.identifier] = vv;
+   }
+   var affectedDetail = [];
+   for (var di = 0; di < (plan.diff || []).length; di++) {
+    var d = plan.diff[di];
+    var v = violationByIdent[d.identifier] || {};
+    affectedDetail.push({
+     identifier: d.identifier,
+     type: d.type || v.type || 'unknown',
+     promptName: v.promptName || null,
+     contentLen: v.contentLen || 0,
+     from: d.from,
+     to: d.to,
+     judgedBy: v.judgedBy || (d.type === 'auto_unknown' ? 'heuristic' : 'registry'),
+    });
+   }
 
    var ctx = _psisPlusGetContext();
    var pm = ctx && typeof ctx.getPresetManager === 'function' ? ctx.getPresetManager('openai') : null;
@@ -297,16 +472,28 @@ void _r;
 
    var beforeOrder = _psisPlusDeepClone(fullPreset.prompt_order[clonedOrderIdx].order);
 
-   // SNAPSHOT：存完整预设（不只是 prompt_order） — v4.9.3 升级
-   _psisPlusHistoryPush({
+   // SNAPSHOT v3：只存 before_order（prompt_order 数组），不再 dump 整个 preset
+   //   v4.9.3 (schema v2) 存 before_full_preset 是为了 restore 时不丢非 prompt_order 字段，
+   //   但每条 几百 KB × 10 条 容易撞 LS 5MB quota（2026-06-22 实测用户报错）。
+   //   v3 改法：restore 时现场拿最新 fullPreset → 仅替换 prompt_order → savePreset。
+   //   副作用：用户在接管后改的其他字段（extensions/regex_script_data）restore 时保留不回滚，
+   //          这反而更符合直觉（用户的后续改动不应被 restore 抹掉）。
+   //   旧 v2 snapshot 通过 before_full_preset 字段继续支持，向后兼容。
+   var snapshotSource = (ctxMeta && ctxMeta.source) || 'manual';
+   var pushOk = _psisPlusHistoryPush({
     timestamp: Date.now(),
     preset_name: presetName,
     character_id: scan.charId,
-    before_full_preset: _psisPlusDeepClone(fullPreset),  // 完整 dump
+    order_idx: clonedOrderIdx,
+    before_order: beforeOrder,
     after_order: plan.newOrder,
     affected: scan.violations.map(function (v) { return v.identifier; }),
-    schema_version: 2,
+    affected_detail: affectedDetail,
+    source: snapshotSource,
+    schema_version: 3,
    });
+   var snapshotSize = JSON.stringify(beforeOrder || []).length;
+   console.log('[PSIS+] history push source=' + snapshotSource + ' affected=' + affectedDetail.length + ' snapshot_bytes=' + snapshotSize + ' write_ok=' + pushOk);
 
    // 只改 clone 的 prompt_order，其它字段原样
    fullPreset.prompt_order[clonedOrderIdx].order = plan.newOrder;
@@ -374,20 +561,40 @@ void _r;
    var rec = arr[arr.length - 1 - idx];
    if (!rec) return { ok: false, reason: 'idx_out_of_range' };
 
-   // v4.9.3 snapshot 含完整预设；老 v1 schema 只有 before_order 字段，拒绝以防丢字段
-   if (rec.schema_version !== 2 || !rec.before_full_preset) {
-    return { ok: false, reason: 'snapshot_too_old_v1_schema' };
-   }
-
    var ctx = _psisPlusGetContext();
    var pm = ctx && typeof ctx.getPresetManager === 'function' ? ctx.getPresetManager('openai') : null;
-   if (!pm || typeof pm.savePreset !== 'function') {
+   if (!pm || typeof pm.savePreset !== 'function' || typeof pm.getCompletionPresetByName !== 'function') {
     return { ok: false, reason: 'preset_manager_unavailable' };
    }
 
-   var restoreClone = _psisPlusDeepClone(rec.before_full_preset);
+   var restoreClone;
+   if (rec.schema_version === 3 && Array.isArray(rec.before_order)) {
+    // v3：现场拿最新 fullPreset → 仅替换 prompt_order[idx].order → savePreset
+    //   用户在接管后改的其他字段（extensions/regex_script_data）保留不回滚
+    var ref;
+    try {
+     ref = pm.getCompletionPresetByName(rec.preset_name);
+    } catch (e) {
+     return { ok: false, reason: 'getCompletionPreset_failed:' + (e && e.message || e) };
+    }
+    if (!ref) return { ok: false, reason: 'preset_not_found:' + rec.preset_name };
+    restoreClone = _psisPlusDeepClone(ref);
+    if (!restoreClone || !Array.isArray(restoreClone.prompt_order)) {
+     return { ok: false, reason: 'preset_missing_prompt_order' };
+    }
+    var restoreIdx = (typeof rec.order_idx === 'number' && rec.order_idx >= 0 && restoreClone.prompt_order[rec.order_idx])
+     ? rec.order_idx
+     : _psisPlusFindOrderIndex(restoreClone, rec.character_id);
+    if (restoreIdx < 0) return { ok: false, reason: 'preset_no_matching_order' };
+    restoreClone.prompt_order[restoreIdx].order = _psisPlusDeepClone(rec.before_order);
+   } else if (rec.schema_version === 2 && rec.before_full_preset) {
+    // v2：兼容已有完整 dump snapshot
+    restoreClone = _psisPlusDeepClone(rec.before_full_preset);
+   } else {
+    return { ok: false, reason: 'snapshot_too_old_or_corrupt:v' + (rec.schema_version || '?') };
+   }
+
    try {
-    // 同 repair：不传 skipUpdate，让 updateList 同步前端内存
     await pm.savePreset(rec.preset_name, restoreClone);
    } catch (e) {
     return { ok: false, reason: 'savePreset_failed:' + (e && e.message || e) };
@@ -400,16 +607,61 @@ void _r;
  }
 
  // === 启动期被动扫描 ===
+ // 2026-06-22 v6.2.0：从 notify-only 升级到 auto-repair（plan temporal-swan Step 5）
+ //   用户拍板"跨卡跨预设通杀"，不再要求用户手动点 UI 确认；启发式误判可通过 PSIS+ 「📜 操作记录」→「还原」回滚。
  async function _psisPlusPassiveScan() {
   if (_psisPlusStartupDone) return;
   _psisPlusStartupDone = true;
+  await _psisPlusAutoRepair({ source: 'passive_scan' });
+ }
+
+ // 自动 repair：扫 → 有 violation 直接 repair（含启发式 auto_unknown 块）
+ //   独立暴露给 oai_preset_changed_after / chat_id_changed / app_ready / F12 console 复用
+ async function _psisPlusAutoRepair(opts) {
+  opts = opts || {};
+  var src = opts.source || 'auto';
   try {
    var scan = _psisPlusScan();
-   if (scan.ok && scan.violations.length >= 1) {
-    var NC = _GLOBAL.CFS4 && _GLOBAL.CFS4.NotificationCenter;
-    if (NC) NC.notify('psis_plus_detected', { count: scan.violations.length, preset: scan.presetName });
+   // 2026-06-22 v6.2.0 · 显式 console 日志让用户 F12 可观测 AUTO 是否真正触发
+   console.log('[PSIS+] autoRepair start source=' + src + ' violations=' + ((scan.violations && scan.violations.length) || 0) + ' preset=' + (scan.presetName || '?'));
+   if (!scan.ok) {
+    console.warn('[PSIS+] autoRepair abort: scan_failed', scan.error || scan.reason);
+    return { ok: false, reason: scan.error || scan.reason || 'scan_failed' };
    }
-  } catch (e) { console.warn('[PSIS+] passive scan failed', e); }
+   if (!scan.violations || scan.violations.length === 0) {
+    console.log('[PSIS+] autoRepair noop: no violations');
+    return { ok: true, applied: 0, scan: scan };
+   }
+   var plan = _psisPlusBuildPlan(scan);
+   if (!plan) {
+    console.warn('[PSIS+] autoRepair abort: plan_failed');
+    return { ok: false, reason: 'plan_failed' };
+   }
+   var r = await _psisPlusRepair(plan, { source: src, violations: scan.violations });
+   console.log('[PSIS+] autoRepair done source=' + src + ' result=' + JSON.stringify({ ok: r && r.ok, applied: r && r.affected, reason: r && r.reason }));
+   var NC = _GLOBAL.CFS4 && _GLOBAL.CFS4.NotificationCenter;
+   if (r.ok) {
+    var autoUnknownCount = 0;
+    for (var i = 0; i < scan.violations.length; i++) {
+     if (scan.violations[i].type === 'auto_unknown') autoUnknownCount++;
+    }
+    if (NC) {
+     NC.notify('psis_plus_repaired', {
+      count: r.affected,
+      preset: r.presetName,
+      auto: true,
+      heuristic: autoUnknownCount,
+      source: opts.source || 'manual',
+     });
+    }
+   } else {
+    if (NC) NC.notify('psis_plus_failed', { detail: r.reason, auto: true, source: opts.source || 'manual' });
+   }
+   return r;
+  } catch (e) {
+   console.warn('[PSIS+] auto repair failed', e);
+   return { ok: false, reason: 'exception:' + ((e && e.message) || e) };
+  }
  }
 
  // === 渲染 HTML section ===
@@ -451,7 +703,14 @@ void _r;
     '</tr></thead><tbody>';
    for (var i = 0; i < scan.violations.length; i++) {
     var v = scan.violations[i];
-    html += '<tr><td>' + _psisPlusEsc(v.identifier) + '</td>' +
+    // 2026-06-22 v6.2.0 · auto_unknown 块加 [启发式] 前缀 + 名称/长度，让用户一眼分辨判定来源
+    var heurPrefix = (v.type === 'auto_unknown')
+     ? '<span style="color:#a8c;font-weight:bold;margin-right:6px">[启发式]</span>' : '';
+    var nameInfo = v.promptName
+     ? '<div style="color:#888;font-size:11px">' + _psisPlusEsc(v.promptName) +
+       (v.contentLen ? ' · ' + v.contentLen + 'B' : '') + '</div>'
+     : '';
+    html += '<tr><td>' + heurPrefix + _psisPlusEsc(v.identifier) + nameInfo + '</td>' +
      '<td><span class="cfs-psisp-type cfs-psisp-type-' + _psisPlusEsc(v.type) + '">' + _psisPlusEsc(v.type) + '</span></td>' +
      '<td>index ' + v.currentIndex + ' (chatHistory 后)</td>' +
      '<td style="color:#e88">⚠ 违规</td></tr>';
@@ -464,11 +723,17 @@ void _r;
   }
 
   if (scan.skipped.length > 0) {
-   html += '<details class="cfs-psisp-skipped"><summary>跳过的 unknown 块 ' + scan.skipped.length + ' 项（v5.x 可注册）</summary>';
-   html += '<table class="cfs-sem-table"><thead><tr><th>identifier</th><th>当前位置</th></tr></thead><tbody>';
+   html += '<details class="cfs-psisp-skipped"><summary>跳过的 unknown 块 ' + scan.skipped.length + ' 项（启发式拒绝 / 兜底保守）</summary>';
+   html += '<table class="cfs-sem-table"><thead><tr><th>identifier</th><th>名称</th><th>当前位置</th><th>原因</th></tr></thead><tbody>';
    for (var s = 0; s < scan.skipped.length; s++) {
     var sk = scan.skipped[s];
-    html += '<tr><td>' + _psisPlusEsc(sk.identifier) + '</td><td>index ' + sk.index + '</td></tr>';
+    var reasonColor = sk.reason === 'keep_after' ? '#888'
+     : sk.reason === 'uncertain' ? '#dd7'
+     : '#888';
+    html += '<tr><td>' + _psisPlusEsc(sk.identifier) + '</td>' +
+     '<td style="color:#888;font-size:11px">' + _psisPlusEsc(sk.promptName || '') + '</td>' +
+     '<td>index ' + sk.index + '</td>' +
+     '<td style="color:' + reasonColor + ';font-size:11px">' + _psisPlusEsc(sk.reason || '') + '</td></tr>';
    }
    html += '</tbody></table></details>';
   }
@@ -503,6 +768,37 @@ void _r;
    '</div></div>';
  }
 
+ // 2026-06-22 v6.2.0 · 升级操作记录展示：
+ //   - 触发源徽章（manual / auto / passive_scan / oai_preset_changed_after）
+ //   - 每个 violation 展开行：[类型徽章] promptName · identifier · index from→to
+ //   - auto_unknown 块加紫色 [启发式] 标记，让用户清楚 AUTO 是被哪个启发式判定带进来的
+ //   - 旧 schema v2 snapshot 无 affected_detail 时降级展示（兼容已落盘记录）
+ function _psisPlusSourceLabel(s) {
+  if (!s) return '<span style="color:#888">(manual)</span>';
+  if (s === 'manual') return '<span style="color:#aaa">手动</span>';
+  if (s === 'oai_preset_changed_after') return '<span style="color:#7af">切预设</span>';
+  if (s === 'passive_scan') return '<span style="color:#7af">启动扫描</span>';
+  if (s === 'auto') return '<span style="color:#7af">auto</span>';
+  return '<span style="color:#888">' + _psisPlusEsc(s) + '</span>';
+ }
+
+ // 2026-06-22 v6.2.0 · 操作记录改 modal 弹层（不再挤在窄胶囊侧栏）
+ //   modal 宽 min(960px, 95vw)，复用 PSIS+ 已有的 cfs-psisp-modal-bg/cfs-psisp-modal 套路
+ //   _psisPlusRenderHistory 仍返回表格 HTML（向后兼容直接渲染场景）
+ //   _psisPlusRenderHistoryModal 包成全屏弹层，由 _doHistory 调用
+ function _psisPlusRenderHistoryModal(arr) {
+  var tableHtml = _psisPlusRenderHistory(arr);
+  // inline style 覆写 modal 宽度（不动 psis.js 的 .cfs-psisp-modal CSS，避免影响 diff modal）
+  return '<div class="cfs-psisp-modal-bg" id="cfs-psisp-hist-modal-bg">' +
+   '<div class="cfs-psisp-modal" style="width:min(960px,95vw);max-height:85vh">' +
+   '<div class="cfs-psisp-modal-head">📜 PSIS+ 操作记录</div>' +
+   '<div class="cfs-psisp-modal-body">' + tableHtml + '</div>' +
+   '<div class="cfs-psisp-modal-foot">' +
+   '<button id="cfs-psisp-hist-modal-close" class="cfs-btn">关闭</button>' +
+   '</div>' +
+   '</div></div>';
+ }
+
  function _psisPlusRenderHistory(arr) {
   if (!arr || arr.length === 0) return '<div class="cfs-sem-empty">无操作记录</div>';
   var rows = '';
@@ -510,22 +806,83 @@ void _r;
    var rec = arr[i];
    var ts = new Date(rec.timestamp).toLocaleString();
    var idx = arr.length - 1 - i;
-   var affectedStr = (rec.affected || []).join(', ');
-   var affectedEsc = _psisPlusEsc(affectedStr);
-   rows += '<tr><td>' + idx + '</td>' +
-    '<td>' + ts + '</td>' +
-    '<td>' + _psisPlusEsc(rec.preset_name) + '</td>' +
-    '<td title="' + affectedEsc + '">' + affectedEsc + '</td>' +
+
+   // 新版（v6.2.0+）：每条 violation 紧凑单行（PSIS+ 窄列宽适配）
+   //   紫圆=启发式 auto_unknown，蓝圆=内置 registry 类型
+   //   超出宽度走 ellipsis，全文进 tooltip
+   var detailHtml = '';
+   if (Array.isArray(rec.affected_detail) && rec.affected_detail.length > 0) {
+    for (var dj = 0; dj < rec.affected_detail.length; dj++) {
+     var d = rec.affected_detail[dj];
+     var dot = (d.type === 'auto_unknown')
+      ? '<span style="color:#a8c">●</span>'
+      : '<span style="color:#7af">●</span>';
+     // fallback name 优先级：promptName > 内置 registry 类型名（如 charDescription/worldInfoBefore）> identifier 短码
+     var name = d.promptName
+      || ((d.type && d.type !== 'auto_unknown' && d.type !== 'unknown') ? d.type : null)
+      || ('#' + (String(d.identifier || '').slice(0, 6)));
+     var pos = (d.from != null && d.to != null) ? (d.from + '→' + d.to) : '';
+     var tipParts = [
+      'id: ' + (d.identifier || ''),
+      'type: ' + (d.type || ''),
+      'name: ' + (d.promptName || '(无)'),
+      'len: ' + (d.contentLen || 0) + 'B',
+      'judgedBy: ' + (d.judgedBy || '(无)'),
+     ];
+     if (pos) tipParts.push('index: ' + pos);
+     var tip = tipParts.join('\n');
+     detailHtml += '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;line-height:1.6" title="' + _psisPlusEsc(tip) + '">' +
+      dot + ' ' + _psisPlusEsc(name) +
+      (pos ? ' <span style="color:#888">· ' + pos + '</span>' : '') +
+      '</div>';
+    }
+   } else {
+    // 旧 snapshot 降级
+    var legacyStr = (rec.affected || []).join(', ');
+    detailHtml = '<div style="color:#888;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + _psisPlusEsc(legacyStr) + '">' + _psisPlusEsc(legacyStr) + '</div>';
+   }
+
+   var heuristicCount = 0;
+   var totalDetail = 0;
+   if (Array.isArray(rec.affected_detail)) {
+    totalDetail = rec.affected_detail.length;
+    for (var hi = 0; hi < totalDetail; hi++) {
+     if (rec.affected_detail[hi].type === 'auto_unknown') heuristicCount++;
+    }
+   }
+   var heurSummary = (heuristicCount > 0)
+    ? '<span style="color:#a8c">●</span>' + heuristicCount + ' '
+    : '';
+   var regCount = totalDetail - heuristicCount;
+   var regSummary = (regCount > 0)
+    ? '<span style="color:#7af">●</span>' + regCount + ' '
+    : '';
+   var countSummary = (totalDetail > 0) ? (heurSummary + regSummary) : '';
+
+   // 时间/触发列：日期、时间、触发源徽章、计数 — 各占一行紧凑显示
+   var dateStr = ts.split(' ')[0] || ts;
+   var timeStr = ts.split(' ')[1] || '';
+   var metaCol = '<div style="font-size:10px;color:#aaa">' + _psisPlusEsc(dateStr) + '</div>' +
+    '<div style="font-size:11px">' + _psisPlusEsc(timeStr) + '</div>' +
+    '<div style="font-size:10px;margin-top:2px">' + _psisPlusSourceLabel(rec.source) + '</div>' +
+    (countSummary ? '<div style="font-size:10px;margin-top:2px">' + countSummary + '</div>' : '');
+
+   rows += '<tr>' +
+    '<td style="text-align:center">' + idx + '</td>' +
+    '<td>' + metaCol + '</td>' +
+    '<td style="font-size:11px;word-break:break-all" title="' + _psisPlusEsc(rec.preset_name || '') + '">' + _psisPlusEsc(rec.preset_name) + '</td>' +
+    '<td>' + detailHtml + '</td>' +
     '<td><button class="cfs-btn cfs-psisp-btn-restore-idx" data-idx="' + idx + '">↩ 还原</button></td>' +
     '</tr>';
   }
+  // modal 内宽度足够，不再 fixed layout 压窄
+  //   idx/时间/预设/还原 列定宽，接管详情列 auto 拿剩余空间
   return '<div class="cfs-psisp-summary">操作记录 ' + arr.length + ' 条（FIFO，上限 ' + PSIS_PLUS_HISTORY_LIMIT + '）</div>' +
-   '<div class="cfs-sem-table-wrap"><table class="cfs-sem-table"><thead><tr>' +
-   '<th>idx</th><th>时间</th><th>预设</th><th>影响 markers</th><th></th>' +
-   '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
-   '<div class="cfs-psisp-actions">' +
-   '<button id="cfs-psisp-btn-back" class="cfs-btn">⬅ 返回</button>' +
-   '</div>';
+   '<div class="cfs-sem-table-wrap"><table class="cfs-sem-table" style="width:100%"><colgroup>' +
+   '<col style="width:40px"><col style="width:110px"><col style="width:180px"><col><col style="width:80px">' +
+   '</colgroup><thead><tr>' +
+   '<th>idx</th><th>时间 / 触发</th><th>预设</th><th>接管详情</th><th></th>' +
+   '</tr></thead><tbody>' + rows + '</tbody></table></div>';
  }
 
  // === bindEvents ===
@@ -571,7 +928,7 @@ void _r;
    if (bConfirm) bConfirm.onclick = async function () {
     bConfirm.disabled = true;
     bConfirm.textContent = '重排中…';
-    var r = await _psisPlusRepair(plan);
+    var r = await _psisPlusRepair(plan, { source: 'manual', violations: scan.violations });
     _close();
     var NC = _GLOBAL.CFS4 && _GLOBAL.CFS4.NotificationCenter;
     if (r.ok) {
@@ -595,18 +952,32 @@ void _r;
    await _doScan();
   }
 
-  async function _doHistory() {
-   if (!resultDiv) return;
+  // 2026-06-22 v6.2.0 · 操作记录改 modal 弹层（脱离窄胶囊侧栏，宽 min(960px,95vw)）
+  function _closeHistModal() {
+   var bg = D.getElementById('cfs-psisp-hist-modal-bg');
+   if (bg && bg.parentNode) bg.parentNode.removeChild(bg);
+  }
+  function _renderHistModal() {
    var arr = _psisPlusHistoryRead();
-   resultDiv.innerHTML = _psisPlusRenderHistory(arr);
-   var bBack = D.getElementById('cfs-psisp-btn-back');
-   if (bBack) bBack.onclick = _doScan;
+   _closeHistModal();
+   var wrapper = D.createElement('div');
+   wrapper.innerHTML = _psisPlusRenderHistoryModal(arr);
+   var panel = getPanel ? getPanel() : null;
+   (panel || D.body).appendChild(wrapper.firstElementChild);
+
+   var bg = D.getElementById('cfs-psisp-hist-modal-bg');
+   var bClose = D.getElementById('cfs-psisp-hist-modal-close');
+   if (bClose) bClose.onclick = _closeHistModal;
+   if (bg) bg.onclick = function (e) { if (e.target === bg) _closeHistModal(); };
+
    var idxBtns = D.querySelectorAll('.cfs-psisp-btn-restore-idx');
    for (var i = 0; i < idxBtns.length; i++) {
     (function (btn) {
      btn.onclick = async function () {
       var idx = Number(btn.getAttribute('data-idx'));
       if (!confirm('还原到 idx=' + idx + ' 的快照？')) return;
+      btn.disabled = true;
+      btn.textContent = '还原中…';
       var r = await _psisPlusRestore(idx);
       var NC = _GLOBAL.CFS4 && _GLOBAL.CFS4.NotificationCenter;
       if (r.ok) {
@@ -614,10 +985,13 @@ void _r;
       } else {
        if (NC) NC.notify('psis_plus_failed', { detail: r.reason });
       }
-      await _doHistory();
+      _renderHistModal(); // 刷新表格反映 restore 结果
      };
     })(idxBtns[i]);
    }
+  }
+  async function _doHistory() {
+   _renderHistModal();
   }
 
   if (btnScan) btnScan.onclick = _doScan;
@@ -626,7 +1000,7 @@ void _r;
 
  // === 暴露 API ===
  _GLOBAL.CFS4.PSISPlus = {
-  _version: '4.9.3',
+  _version: '6.2.0',
   REGISTRY: PSIS_BLOCK_REGISTRY,
   scan: _psisPlusScan,
   repair: function (planOverride) { return _psisPlusRepair(planOverride); },
@@ -636,6 +1010,8 @@ void _r;
   renderSection: _psisPlusRenderSection,
   bindEvents: _psisPlusBindEvents,
   passiveScan: _psisPlusPassiveScan,
+  autoRepair: _psisPlusAutoRepair, // 2026-06-22 v6.2.0 auto 入口（F12 调试可手动调）
+  judgeUnknown: _psisPlusJudgeUnknown, // 暴露启发式判定供调试
  };
 
  // === 启动期挂钩 ===
@@ -647,20 +1023,33 @@ void _r;
   if (typeof eventOn === 'function') {
    eventOn('oai_preset_changed_after', function () {
     _psisPlusStartupDone = false;
-    setTimeout(_psisPlusPassiveScan, 1000);
+    // 2026-06-22 v6.2.0 切预设后走 auto-repair（含启发式 auto_unknown）
+    setTimeout(function () { _psisPlusAutoRepair({ source: 'oai_preset_changed_after' }); }, 1000);
+   });
+   // 2026-06-22 v6.2.0 · chat_id_changed 兜底触发 PSIS+ AutoRepair
+   //   原因：savePreset → updateList → trigger('change') → applyChatCompletionPreset → 再次 emit
+   //   oai_preset_changed_after 形成事件链路依赖。某些操作（如 PSIS+ Restore / 第三方扩展
+   //   绕过 PresetManager 直接改 oai_settings.prompt_order）不会触发 oai_preset_changed_after，
+   //   导致 AUTO 不跑、操作记录缺漏。加 chat_id_changed 作为"跨卡通杀"信道，切卡必跑。
+   //   debounce 2s（晚于 PETL 1.5s，避免与 PETL 抢同帧）
+   var _psisPlusChatChangeTimer = null;
+   eventOn('chat_id_changed', function () {
+    if (_psisPlusChatChangeTimer) clearTimeout(_psisPlusChatChangeTimer);
+    _psisPlusChatChangeTimer = setTimeout(function () {
+     _psisPlusAutoRepair({ source: 'chat_id_changed' });
+    }, 2000);
    });
   }
   if (typeof eventOnce === 'function') {
    eventOnce('app_ready', function () {
-    setTimeout(_psisPlusPassiveScan, 500); // 让 chatCompletionSettings 完成 hydrate
+    setTimeout(_psisPlusPassiveScan, 500); // hydrate 后 auto-repair（PassiveScan 内部已切到 autoRepair）
    });
   } else {
-   // 老版 ST 没 eventOnce → 短延时兜底
    setTimeout(_psisPlusPassiveScan, 2000);
   }
  } catch (e) {}
 
- console.log('[CFS v4.9.3 PSIS Plus] 已挂载，window.CFS4.PSISPlus 可用 (savePreset 完整对象架构)');
+ console.log('[CFS v6.2.0 PSIS Plus] 已挂载，window.CFS4.PSISPlus 可用 (auto-repair + 启发式 unknown 接管)');
 })();
 
 
