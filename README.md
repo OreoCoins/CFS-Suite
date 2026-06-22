@@ -1,9 +1,9 @@
 # CFS Suite
 
 > **Cache-Friendly Scanner 套餐版** —— SillyTavern 原生扩展。
-> CFS V4.9.3 完整接管层 + 浮动胶囊 6.0 UI,**装一个 = 装两个**(CFS 接管层 + CFS-MVU 套餐版酒馆助手脚本)。
+> CFS V4.9.3 完整接管层 + 浮动胶囊 6.2 UI,**装一个 = 装两个**(CFS 接管层 + CFS-MVU 套餐版酒馆助手脚本)。
 >
-> 当前版本:`v6.1.1` — `[cfs:ignore]` 豁免补漏(PSIS R1 自动守护路径)+ v6.1.0 全部功能
+> 当前版本:`v6.2.0` — **命中率退化根因修复(实测 50.8% → 91.5%)** + character_book 接管 + 零第三方依赖持久化 + PSIS+ 启发式 unknown 接管 + 操作记录 modal + LS 5MB quota 瘦身 + v4.9 严格模式
 
 ---
 
@@ -21,6 +21,62 @@ CFS Suite 是**霸王扩展**:
 - 接管仅在运行时,不删用户磁盘上的卡 / 扩展文件
 
 **如不接受这些规则,请装 [CFS Solo](https://github.com/OreoCoins/CFS-SillyTavern)**(单脚本版,不接管,仅 cache 优化)。
+
+---
+
+## 📋 v6.2.0 主要改动(2026-06-22)
+
+### 命中率退化根因修复 — 实测 50.8% → **91.5%**(超 v4.9 历史峰值 79.9%)
+
+**问题**:v4.9 时期同卡同预设峰值命中率 99.93%(重生)/ 加权 79.9%(日常),v5.0/v6.x 重构后退化到 50.8%。
+
+**根因**(读 v4.9 时期施工日志找出):v4.9 PSIS R1 公理是**默认所有 enabled entry 都放 prefix 区,仅含真随机/最近消息宏的"真破坏者"才例外踢 chat 末尾**。v5.0/v6.x 把"动态宏"定义扩太大(EJS `<%%>` / mvu_plot 标签 / `{{getvar::xxx}}` 静态宏 / JSONPatch / 字段风险全当 dynamic),把太多稳定 entry 误判踢到 chat 末尾 → prefix 区缩水 → 命中率上限崩塌 30+pt。
+
+**修法 — PETL v4.9 严格模式**(默认 ON,`localStorage['cfs-suite/petl_v49_strict_mode']` 可关):
+
+- `V49_DYNAMIC_PATTERNS` 9 条窄义真破坏者(`lastusermessage` / `lastmessage` / `random` / `roll` / `pick` / `date|time|...` / `format_message_variable::` / `input`)
+- **非真动态** → `before_character_definition / constant=true / role=0 / selective=false`
+  - role=0 防 ST normalize 撤销(v4.9 LOG line 84 教训:`(before_char, role=user)` 被自动撤回 `at_depth_as_user`)
+- **真动态** → `at_depth_as_user / depth=0`
+- snapshot 含 `oldConstant/oldRole/oldSelective`,rollback 完整回滚 5 字段
+- API:`window.CFS4.PETL.isV49Strict() / setV49Strict(false)`
+- 启动期一次性 toastr 提示(LS flag `cfs-suite/petl_v49_notified_v1` 防重复弹)
+
+### character_book 接管(plan B temporal-swan)
+
+- `_petlReadCharacterBook` 从 `SillyTavern.getContext()` 拿当前角色 `data.character_book.entries`
+- `_petlJudgeCharbookEntry` 三态判定(v49 / 老模式分流)
+- comment 加 `[CFS4_AUTO]` 前缀(二次扫豁免 + 分享卡接收方可识别 CFS 改动来源)
+- 应用动作 + 持久化卡 JSON 到 ST backend
+
+### 零第三方依赖持久化通道(用户拍板"不是所有用户都装 cocktail-plus")
+
+**ST backend `charaFormatData` (characters.js:567)** 走 `tryParse(data.json_data)` — POST 时只读 `#character_json_data` 隐藏 input 这一个字符串作为 character_book 来源。PETL 改 `characters[chid].data` 内存不被读到。
+
+**cocktail-plus 双层封锁** `/api/characters/edit`:
+- 乐观锁 `sha256(磁盘 PNG metadata)` 不匹配 → 409 stale
+- 即使过了 → `nextBody.json_data = rawJson` 强制覆盖前端发的 character_book
+
+**通道按优先级**:
+1. **主路径**:`jQuery $.ajax` → XHR(cocktail-plus 没 patch XHR + ST `$.ajaxPrefilter` 自动加正确 CSRF token)
+2. **Fallback**:原生 `XMLHttpRequest` + `_petlFetchCsrfToken()` 主动 `fetch('/csrf-token')` 拿 token(端点不在 cocktail-plus FAST_ROUTES,不被劫持)
+3. **极端兜底**:纯 `fetch` + 自取 CSRF(jQuery 不可用时)
+
+**完全不依赖任何第三方扩展私有 API**。所有 ST 用户(装 / 不装 cocktail-plus)都能用。
+
+### PSIS+ 启发式 unknown 接管(plan A temporal-swan)
+
+- `_psisPlusJudgeUnknown` 七步启发式判定(`stable_move` / `keep_after` / `uncertain`)
+- 识别双人成行 v7.0 思维链 + 输出格式等 user-role prompt 自动重排到 prefix 区
+- AUTO 接管三源:`passive_scan` (启动期) / `oai_preset_changed_after` (切预设) / `chat_id_changed` (切卡兜底信道)
+- snapshot v3 schema:从 `before_full_preset` (百 KB 级) → `before_order` (KB 级),**瘦身 100×** 修复撞 LS 5MB quota
+- 操作记录改全屏 modal(`min(960px,95vw)`),脱离窄胶囊侧栏排版崩坏
+- 每条 violation 触发源徽章 + 类型 chip + from→to + `[启发式]` 紫标
+
+### SEM 跨卡污染 hotfix
+
+- `_semListMigrated(opts)` / `_semRollbackAll(opts)` 加 `activeOnly` 默认开 → 仅显示当前角色绑定 worldbook 迁移记录
+- 监听 `chat_id_changed` / `character_selected` 切卡兜底 → 自动重拉 UI
 
 ---
 
@@ -141,7 +197,7 @@ ST UI → 扩展 → 安装扩展 → 粘贴 git URL:
 https://github.com/OreoCoins/CFS-Suite
 ```
 
-→ F5 刷新 ST → CFS Suite 自动启用 → 浮动胶囊 `🥵 CFS缓存优化器 · 6.0.0` 出现在右上角。
+→ F5 刷新 ST → CFS Suite 自动启用 → 浮动胶囊 `🥵 CFS缓存优化器 · 6.2.0` 出现在右上角。
 
 ### 装 CFS-MVU 套餐版酒馆助手脚本(必备)
 
@@ -168,11 +224,11 @@ F12 console 应该看到:
 [CFS-Suite/polyfill] 13 项已挂:eventOn, eventOnce, eventEmit, ...
 [CFS v4.x] StatData Engine 4.0.0 initialized
 [CFS-Suite] APP_READY confirmed { ... 16 项 true, PETL: true }
-[CFS-Suite/petl] v6.0.0 loaded (toggle LS=cfs-suite/petl_auto_takeover=ON)
+[CFS-Suite/petl] v6.2.0 loaded (enabled=ON, v49Strict=ON)
 [CFS-PSIS] 切卡自动归零 dynamic 已挂钩
 ```
 
-右上角应该出现浮动胶囊 `🥵 CFS缓存优化器 · 6.0.0`。
+右上角应该出现浮动胶囊 `🥵 CFS缓存优化器 · 6.2.0`。
 
 ---
 
@@ -196,7 +252,7 @@ F12 console 应该看到:
 CFS Suite 提供**两个**独立 UI(并存):
 
 ### 1. 浮动胶囊 6.0(推荐)
-- 右上角浮动 `🥵 CFS缓存优化器 · 6.0.0`
+- 右上角浮动 `🥵 CFS缓存优化器 · 6.2.0`
 - **可拖拽**到屏幕任意位置(位置自动记忆,移动端触屏支持)
 - 点击展开折叠面板:
   - 运行状态:Coordinator 阶段 / 接管模式 / 16 项模块明细折叠
@@ -211,6 +267,27 @@ CFS Suite 提供**两个**独立 UI(并存):
 - 聊天输入框旁的 `🛡️ MVU 守护` 按钮
 - 点击弹出完整面板(三大块归零 / MVU 接口管理 / 切卡自动归零 toggle)
 - 适合需要细粒度调试的高级用户
+
+---
+
+## 📈 装机量(GitHub 公开数据近似)
+
+![GitHub Stars](https://img.shields.io/github/stars/OreoCoins/CFS-Suite?style=flat-square&logo=github&label=Stars)
+![GitHub Forks](https://img.shields.io/github/forks/OreoCoins/CFS-Suite?style=flat-square&logo=github&label=Forks)
+![GitHub Watchers](https://img.shields.io/github/watchers/OreoCoins/CFS-Suite?style=flat-square&logo=github&label=Watchers)
+![Commit Activity](https://img.shields.io/github/commit-activity/m/OreoCoins/CFS-Suite?style=flat-square&label=月提交)
+![Last Commit](https://img.shields.io/github/last-commit/OreoCoins/CFS-Suite?style=flat-square&label=最近提交)
+![License](https://img.shields.io/github/license/OreoCoins/CFS-Suite?style=flat-square)
+
+> **关于"总安装人数 / 今日安装人数"**:GitHub 公开 API **不直接统计** ST 扩展通过 git URL 的安装次数(用户走 ST UI 粘贴 git URL 安装,不经 release / package manager)。
+>
+> **CFS 自身遵循 [no_telemetry 约定](#与-cfs-solo-的关系)** 不内嵌任何上报渠道,所以"安装人数"的真实数据没有公开来源。下面的 Star 增长曲线是 GitHub 公开数据里**最接近"用户兴趣 / 装机意愿"**的近似指标(每个 Star 代表一次主动收藏,跟"装一次试试"高度相关)。
+
+### ⭐ Star 增长曲线(总计 / 按日新增)
+
+[![Star History Chart](https://api.star-history.com/svg?repos=OreoCoins/CFS-Suite&type=Date)](https://star-history.com/#OreoCoins/CFS-Suite&Date)
+
+*图源:[star-history.com](https://star-history.com) (自动渲染 SVG,刷新即更新)*
 
 ---
 
@@ -339,7 +416,7 @@ await window.CFS4.Coordinator.auditEntries({ force: true })
 
 ```
 CFS-Suite/
-├── manifest.json                ST 扩展清单 (v6.0.0)
+├── manifest.json                ST 扩展清单 (v6.2.0)
 ├── index.js                     入口
 ├── style.css                    占位
 ├── cfs-mvu/                     预编译 bundle(路线重审,当前不自动加载)
