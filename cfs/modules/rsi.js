@@ -48,7 +48,11 @@ const _ringBuffer = []; // 每项是一轮的 blocks 数组 [{idx, role, len, ha
 //     - 主请求 + 副请求都发 HTTP → 都被拦，按 messages.length 阈值区分（实测主 50+ / 副 10-20）
 //     - 切卡不触发 HTTP，ring buffer 自然不被污染；chatId 兜底负责清残留
 //     - 与 WM 缓存查看器的 fetch patch 是 chain 关系，互不破坏
-const MIN_MAIN_CHAT_LEN = 30; // 主请求 messages 数下限，副请求一律 ≤20 块
+// 2026-06-22: 30 → 20
+//   无限回廊 2.2 主请求实测 27 块（chat history 拼成超大 user 块导致总块数少）, 撞 30 阈值被误杀
+//   副请求实测: CFS-MVU/Slash-Runner 14-16 块, v4-flash 副请求 7 块, 全 ≤16
+//   20 = 主请求最小值的安全下限 + 副请求最大值 +4 缓冲
+const MIN_MAIN_CHAT_LEN = 20; // 主请求 messages 数下限，副请求一律 ≤16 块
 const TARGET_API_FRAGMENT = '/api/backends/chat-completions/generate';
 
 let _lastSeenChatId = null;
