@@ -66,7 +66,7 @@ import { PETL } from './cfs/core/petl.js';
 import './cfs/ui/floating_capsule.js';
 
 const TAG = '[CFS-Suite]';
-const VERSION = '6.1.1';
+const VERSION = '6.2.0';
 
 console.log(`${TAG} v${VERSION} loading...`);
 

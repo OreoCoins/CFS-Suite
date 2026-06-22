@@ -106,7 +106,7 @@ _mockEntries['test_wb'] = [
 
 const { PETL } = await import('../cfs/core/petl.js');
 
-// 2026-06-22 v6.3.0 · v49 严格模式默认开，但旧用例按 v5/v6.x 行为期望
+// 2026-06-22 v6.2.0 · v49 严格模式默认开，但旧用例按 v5/v6.x 行为期望
 // → 这里显式关闭 v49 模式跑老路径回归。v49 模式的新用例在文件末尾独立段
 PETL.setV49Strict(false);
 
@@ -198,7 +198,7 @@ console.log('\n[Test 8] history 已清空（rollback 后）');
 const hist = PETL.getHistory();
 assert('history.length === 0', hist.length === 0, `actual ${hist.length}`);
 
-// === 2026-06-22 v6.3.0 v4.9 严格模式专用测试段 ===
+// === 2026-06-22 v6.2.0 v4.9 严格模式专用测试段 ===
 console.log('\n[Test 9] V49_DYNAMIC_PATTERNS 真破坏者识别');
 const I9 = PETL._internals;
 assert('v49 命中 {{lastusermessage}}', I9.entryIsV49TrueDynamic({ content: '{{lastusermessage}}' }));
@@ -235,7 +235,7 @@ const uid1Dyn = v49Patches.find(p => p.uid === 1);
 assert('v49 uid 2 → position=before_character_definition', uid2?.position === 'before_character_definition');
 assert('v49 uid 2 → constant=true', uid2?.constant === true);
 assert('v49 uid 2 → role=0 (system, v4.9 LOG 教训)', uid2?.role === 0);
-assert('v49 uid 2 → selective=false (v6.3.0 显式语义)', uid2?.selective === false);
+assert('v49 uid 2 → selective=false (v6.2.0 显式语义)', uid2?.selective === false);
 assert('v49 uid 1 (真动态) → at_depth_as_user', uid1Dyn?.position === 'at_depth_as_user');
 assert('v49 uid 1 → depth=0', uid1Dyn?.depth === 0);
 

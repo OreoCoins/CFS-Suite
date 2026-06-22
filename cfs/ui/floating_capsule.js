@@ -16,7 +16,7 @@
  */
 
 const TAG = '[CFS-Suite/ui]';
-const VERSION = '6.0.0';
+const VERSION = '6.2.0';
 const LS_POS_KEY = 'cfs-suite/ui/capsule_position_v2';
 // 一次性清理 v1 旧 key：v1 默认右下，部分手机机型不可见；v2 改默认右上
 // 老用户升级后 v2 不存在 → 走新默认 CSS（右上角）→ 不再被 ST #send_form / iOS home indicator 遮住

@@ -21,7 +21,7 @@
 //   好处：node 烟测可直接 mock 全局 import 不炸（参考 rsi.js / post_history_pinner.js 模式）
 
 const TAG = '[CFS-Suite/petl]';
-const VERSION = '6.3.0';
+const VERSION = '6.2.0';
 const LS_TOGGLE = 'cfs-suite/petl_auto_takeover';
 const LS_V49_STRICT = 'cfs-suite/petl_v49_strict_mode';
 const LS_HISTORY = 'cfs-suite/petl_history_v1';
@@ -38,7 +38,7 @@ const HISTORY_MAX = 50;
 const CHARBOOK_STABLE_MIN_LEN = 500;
 const STABLE_POSITION = 'before_character_definition';
 
-// 2026-06-22 v6.3.0 · v4.9 PSIS R1 严格模式
+// 2026-06-22 v6.2.0 · v4.9 PSIS R1 严格模式
 // 背景：v4.9 时期同卡同预设 RSI 期望命中率 70-85%，v5/v6 PETL 把"动态宏"定义扩太大
 //   （EJS / mvu_plot 标签 / {{getvar::xxx}} 静态宏 / JSONPatch 全当 dynamic）→ 大量稳定 entry
 //   被踢到 at_depth_as_user 减小 prefix 区 → 命中率退化到 50% 区间。
@@ -74,7 +74,7 @@ function _setEnabled(b) {
     try { localStorage.setItem(LS_TOGGLE, b ? '1' : '0'); } catch (e) {}
 }
 
-// 2026-06-22 v6.3.0 · v4.9 严格模式 toggle（默认开 — 跟 v4.9 PSIS R1 行为一致）
+// 2026-06-22 v6.2.0 · v4.9 严格模式 toggle（默认开 — 跟 v4.9 PSIS R1 行为一致）
 function _isV49Strict() {
     try { return localStorage.getItem(LS_V49_STRICT) !== '0'; } catch (e) { return true; }
 }
@@ -192,7 +192,7 @@ function _petlJudgeCharbookEntry(entry) {
     const v49Strict = _isV49Strict();
 
     if (v49Strict) {
-        // 2026-06-22 v6.3.0 · v4.9 严格模式（character_book 跟独立 worldbook 同规则）
+        // 2026-06-22 v6.2.0 · v4.9 严格模式（character_book 跟独立 worldbook 同规则）
         if (_entryIsV49TrueDynamic(entry)) {
             if (_isAlreadyAtChatEnd(entry)) return { action: 'skip', reason: 'position_ok' };
             return { action: 'to_chat_end', newPosition: FIX_POSITION, newDepth: FIX_DEPTH };
@@ -205,7 +205,7 @@ function _petlJudgeCharbookEntry(entry) {
             newPosition: STABLE_POSITION,
             newConstant: STABLE_CONSTANT,
             newRole: STABLE_ROLE,
-            newSelective: false, // v6.3.0 显式语义
+            newSelective: false, // v6.2.0 显式语义
         };
     }
 
@@ -279,7 +279,7 @@ function _petlSyncCharacterBookToFormData() {
 }
 
 // 自取 ST CSRF token — fetch /csrf-token（ST 端点，无前置依赖）
-//   2026-06-22 v6.3.0 修：原从 <meta name="csrf-token"> 读拿到的是空/旧，ST 实际 token 存
+//   2026-06-22 v6.2.0 修：原从 <meta name="csrf-token"> 读拿到的是空/旧，ST 实际 token 存
 //   在 fetch('/csrf-token') JSON 字段（见 ST script.js:694 firstLoadInit）
 //   /csrf-token 不在 cocktail-plus FAST_ROUTES（实测 ENDPOINT_LIST 只含 characters-all / version），
 //   原生 fetch 直接打不会被劫持
@@ -320,7 +320,7 @@ function _petlSaveCharacterViaAjax($$, form) {
 }
 
 // 原生 XMLHttpRequest 兜底 — jQuery 不可用 / $.ajax 异常时使用
-//   2026-06-22 v6.3.0 用户拍板"不是所有用户都装 cocktail-plus，需要考量另寻出路"：
+//   2026-06-22 v6.2.0 用户拍板"不是所有用户都装 cocktail-plus，需要考量另寻出路"：
 //   原 fallback 走 window.__cocktailPlusEarlyBridge.rawFetch 是依赖第三方扩展私有 API，
 //   不通用。改用原生 XHR + 主动 fetch /csrf-token 拿 token：
 //     - XHR 通道：cocktail-plus 没 patch（确认 early-bridge.ts patchTemplateXHR 只 hook 模板路径）
@@ -470,7 +470,7 @@ async function scanAndTakeover(opts) {
             if (comment.indexOf(CFS4_PREFIX) === 0) { skipped.cfs4++; continue; }
 
             if (v49Strict) {
-                // 2026-06-22 v6.3.0 · v4.9 严格模式：恢复 PSIS R1 不变量
+                // 2026-06-22 v6.2.0 · v4.9 严格模式：恢复 PSIS R1 不变量
                 //   非 v49 真破坏者 → 必须在 prefix (before_character_definition + constant=true + role=0)
                 //   v49 真破坏者 → 必须在 chat 末尾 (at_depth_as_user + depth=0)
                 const isTrueDyn = _entryIsV49TrueDynamic(e);
@@ -502,7 +502,7 @@ async function scanAndTakeover(opts) {
                         position: STABLE_POSITION,
                         constant: STABLE_CONSTANT,
                         role: STABLE_ROLE,
-                        // v6.3.0 显式 selective=false：constant=true 已优先强制注入，
+                        // v6.2.0 显式 selective=false：constant=true 已优先强制注入，
                         //   但避免 ST 内部某些路径同时检查 selective 时语义分歧
                         selective: false,
                     });
@@ -626,7 +626,7 @@ async function scanAndTakeover(opts) {
             } else if (v.action === 'to_prefix') {
                 ent.position = v.newPosition;
                 ent.constant = v.newConstant;
-                // v6.3.0 v49 模式：role / selective 也得改
+                // v6.2.0 v49 模式：role / selective 也得改
                 if (v.newRole != null) ent.role = v.newRole;
                 if (v.newSelective != null) ent.selective = v.newSelective;
             }
@@ -657,7 +657,7 @@ async function scanAndTakeover(opts) {
                 const charBookSuffix = charBookApplied > 0 ? ' (含 ' + charBookApplied + ' 条卡内置)' : '';
                 const modeTag = v49Strict ? ' [v4.9 严格]' : '';
                 toastr.success('⚡ CFS PETL 已接管 ' + appliedTotal + ' 条 entry' + charBookSuffix + modeTag + '。详情→ 浮动胶囊 PETL 记录',
-                    'CFS-Suite v6.3 PETL', { timeOut: 8000 });
+                    'CFS-Suite v6.2 PETL', { timeOut: 8000 });
             }
         } catch (_eToast) {}
     }
@@ -710,7 +710,7 @@ async function rollbackLast() {
     for (let i = 0; i < bookNames.length; i++) {
         const lb = bookNames[i];
         const snaps = last.books[lb];
-        // v6.3.0 兼容 v49 snapshot：含 oldConstant/oldRole/oldSelective 时一并回滚
+        // v6.2.0 兼容 v49 snapshot：含 oldConstant/oldRole/oldSelective 时一并回滚
         const patches = snaps.map(s => {
             const patch = {
                 uid: s.uid,
@@ -743,7 +743,7 @@ export const PETL = {
     _version: VERSION,
     isEnabled: _isEnabled,
     setEnabled: _setEnabled,
-    // v6.3.0 v4.9 严格模式控制
+    // v6.2.0 v4.9 严格模式控制
     isV49Strict: _isV49Strict,
     setV49Strict: _setV49Strict,
     runNow: () => scanAndTakeover({ triggeredBy: 'manual' }),
@@ -769,7 +769,7 @@ if (_GLOBAL) {
 
 console.log(TAG + ' v' + VERSION + ' loaded (enabled=' + (_isEnabled() ? 'ON' : 'OFF') + ', v49Strict=' + (_isV49Strict() ? 'ON' : 'OFF') + ')');
 
-// 2026-06-22 v6.3.0 · 启动期一次性 toastr 提示 v49 严格模式状态
+// 2026-06-22 v6.2.0 · 启动期一次性 toastr 提示 v49 严格模式状态
 //   背景：v49 模式默认 ON，但用户可能不知道这条规则的存在。
 //   用 LS 一次性 flag 防止 F5 重复弹（首次安装/升级时提示一次）。
 //   用户可通过 console: window.CFS4.PETL.setV49Strict(false) 关闭，或在 entry comment 加 [cfs:ignore] 跳过单条
@@ -785,7 +785,7 @@ try {
                         '稳态 entry 自动迁回 prefix 区（命中率显著提升）。\n' +
                         '关闭：F12 跑 window.CFS4.PETL.setV49Strict(false)\n' +
                         '单条豁免：entry comment 加 [cfs:ignore]';
-                    toastr.info(msg, 'CFS-Suite v6.3 PETL', { timeOut: 15000, extendedTimeOut: 5000 });
+                    toastr.info(msg, 'CFS-Suite v6.2 PETL', { timeOut: 15000, extendedTimeOut: 5000 });
                 }
                 localStorage.setItem(LS_V49_NOTIFIED, '1');
             } catch (_) {}
