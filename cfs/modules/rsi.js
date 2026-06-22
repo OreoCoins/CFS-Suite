@@ -72,6 +72,15 @@ function _stringifyContent(c) {
     catch { return String(c); }
 }
 
+// 2026-06-22 v6.4 Drift Panel · 反查辅助：剥 entry content 中的动态宏，得到"渲染时不变的稳定子串"
+// 用于跟 ring buffer 中已渲染的 block.contentSlice 做 substring 匹配
+// 简单 regex（够用，嵌套 {{a::{{b}}}} 也能剥外层，残留 `}` 不影响 ≥80 字符匹配）
+const _MACRO_REGEX = /\{\{[^{}]*\}\}|<%[\s\S]*?%>/g;
+function _stripMacros(content) {
+    if (typeof content !== 'string') return '';
+    return content.replace(_MACRO_REGEX, '');
+}
+
 // L2 修复：history 识别 — 用 assistant 块作为强锚点
 //
 // 旧策略（已废弃）：从末尾反向找 user/assistant 占比 ≥80% 的最大窗口。在「预设把指令
@@ -535,8 +544,13 @@ function _getDriftCandidates() {
 }
 export function getDriftCandidates() { return _getDriftCandidates(); }
 
+// 2026-06-22 v6.4 Drift Panel · 测试钩子（仅给单测用，业务不依赖）
+export const __testHooks = {
+    _stripMacros,
+};
+
 export const RSI = {
-    _version: '2.1', // 2026-06-21 v6 阶段 D: contentSlice + getDriftCandidates
+    _version: '2.2', // 2026-06-22 v6.4: Drift Panel — contentSlice 1024 + _stripMacros
     getRoundsCount: () => _ringBuffer.length,
     getLatest: () => _ringBuffer.length > 0 ? _ringBuffer[_ringBuffer.length - 1] : null,
     getRingBuffer: () => _ringBuffer, // L1 pinner 需要查上一轮做跨轮 hash 比对
