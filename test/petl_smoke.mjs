@@ -106,6 +106,10 @@ _mockEntries['test_wb'] = [
 
 const { PETL } = await import('../cfs/core/petl.js');
 
+// 2026-06-22 v6.3.0 · v49 严格模式默认开，但旧用例按 v5/v6.x 行为期望
+// → 这里显式关闭 v49 模式跑老路径回归。v49 模式的新用例在文件末尾独立段
+PETL.setV49Strict(false);
+
 let pass = 0, fail = 0;
 function assert(name, cond, detail) {
     if (cond) { console.log(`  ✅ ${name}`); pass++; }
@@ -193,6 +197,55 @@ assert('uid 2 回滚到 after_character_definition', uid2Patch?.position === 'af
 console.log('\n[Test 8] history 已清空（rollback 后）');
 const hist = PETL.getHistory();
 assert('history.length === 0', hist.length === 0, `actual ${hist.length}`);
+
+// === 2026-06-22 v6.3.0 v4.9 严格模式专用测试段 ===
+console.log('\n[Test 9] V49_DYNAMIC_PATTERNS 真破坏者识别');
+const I9 = PETL._internals;
+assert('v49 命中 {{lastusermessage}}', I9.entryIsV49TrueDynamic({ content: '{{lastusermessage}}' }));
+assert('v49 命中 {{random}}', I9.entryIsV49TrueDynamic({ content: '{{random}}' }));
+assert('v49 命中 {{date}}', I9.entryIsV49TrueDynamic({ content: '{{date}}' }));
+assert('v49 命中 {{format_message_variable::}}', I9.entryIsV49TrueDynamic({ content: '{{format_message_variable::stat_data}}' }));
+assert('v49 不算 {{getvar::}} (静态宏)', !I9.entryIsV49TrueDynamic({ content: '{{getvar::x}}' }));
+assert('v49 不算 EJS <% %>', !I9.entryIsV49TrueDynamic({ content: '<% if (x) %>' }));
+assert('v49 不算 mvu_update 标签', !I9.entryIsV49TrueDynamic({ content: 'mvu_update field xxx' }));
+assert('v49 不算 JSONPatch 文本', !I9.entryIsV49TrueDynamic({ content: 'apply JSONPatch ops' }));
+assert('v49 不算 plain text', !I9.entryIsV49TrueDynamic({ content: '这是一段纯文本' }));
+
+console.log('\n[Test 10] v49 严格模式：非真动态 → 迁回 prefix');
+// 准备：清空 history + 重置 _mockEntries（uid=8 plain text 在 at_depth_as_user 应被迁回 prefix）
+_mockEntries['test_wb'] = [
+    { uid: 1, comment: '含真动态', content: '{{lastusermessage}}', enabled: true, position: 'before_character_definition', depth: 0, role: 0 },
+    { uid: 2, comment: 'plain', content: '这是纯文本规则。', enabled: true, position: 'at_depth_as_user', depth: 0, role: 1 },
+    { uid: 3, comment: 'ejs', content: '<% if (x) %> ok', enabled: true, position: 'at_depth_as_user', depth: 0, role: 1 },
+    { uid: 4, comment: 'getvar', content: '{{getvar::a}}', enabled: true, position: 'at_depth_as_user', depth: 0, role: 1 },
+    { uid: 5, comment: '[cfs:ignore]', content: '{{lastusermessage}}', enabled: true, position: 'at_depth_as_user', depth: 0, role: 1 },
+];
+PETL.clearHistory();
+_setLorebookCalls.length = 0;
+PETL.setV49Strict(true);
+const r10 = await PETL.runNow();
+console.log('  v49 result:', JSON.stringify({applied:r10.applied, v49ToPrefix:r10.v49ToPrefix, v49ToChatEnd:r10.v49ToChatEnd, skipped:r10.skipped}));
+assert('v49 接管总数 = 4 (uid 1 真动态→chatEnd; 2/3/4 非真动态→prefix)', r10.applied === 4, `actual ${r10.applied}`);
+assert('v49 v49ToPrefix = 3 (uid 2/3/4)', r10.v49ToPrefix === 3, `actual ${r10.v49ToPrefix}`);
+assert('v49 v49ToChatEnd = 1 (uid 1)', r10.v49ToChatEnd === 1, `actual ${r10.v49ToChatEnd}`);
+assert('v49 ignore = 1 (uid 5)', r10.skipped.ignore === 1, `actual ${r10.skipped.ignore}`);
+const v49Patches = _setLorebookCalls[0]?.patches || [];
+const uid2 = v49Patches.find(p => p.uid === 2);
+const uid1Dyn = v49Patches.find(p => p.uid === 1);
+assert('v49 uid 2 → position=before_character_definition', uid2?.position === 'before_character_definition');
+assert('v49 uid 2 → constant=true', uid2?.constant === true);
+assert('v49 uid 2 → role=0 (system, v4.9 LOG 教训)', uid2?.role === 0);
+assert('v49 uid 2 → selective=false (v6.3.0 显式语义)', uid2?.selective === false);
+assert('v49 uid 1 (真动态) → at_depth_as_user', uid1Dyn?.position === 'at_depth_as_user');
+assert('v49 uid 1 → depth=0', uid1Dyn?.depth === 0);
+
+console.log('\n[Test 11] v49 模式回滚保留 oldConstant/oldRole');
+const rb = await PETL.rollbackLast();
+const rbPatches = _setLorebookCalls[1]?.patches || [];
+const rb2 = rbPatches.find(p => p.uid === 2);
+assert('v49 rollback 恢复 uid 2 position', rb2?.position === 'at_depth_as_user');
+assert('v49 rollback 恢复 uid 2 constant 为 false', rb2?.constant === false);
+assert('v49 rollback 恢复 uid 2 role=1 (user)', rb2?.role === 1);
 
 console.log(`\n=== 总计: ${pass} pass / ${fail} fail ===`);
 process.exit(fail > 0 ? 1 : 0);
