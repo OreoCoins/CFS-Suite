@@ -219,4 +219,45 @@ for (const c of r6b.candidates) {
 }
 pass(`空 entries → 全 candidates matchType=none + 80 字符指纹`);
 
+// ============ Task 7: _genDriftPanel HTML ============
+console.log('\n=== Task 7: _genDriftPanel HTML ===');
+__testHooks.injectRingBuffer(fx.ringBuffer);
+const html = await RSI.genDriftPanel({ _testEntries: fx.activeLoreEntries });
+
+// 必须出现的关键字段
+const mustHave = [
+    '为什么这是问题', '逐字符比对',                           // 顶部白话段
+    '公平骰池系统',                                          // entry 名
+    'uid <code>6</code>',                                   // uid
+    '无限回廊2.2_主世界书',                                  // worldbook 名
+    'before_character_definition',                          // position
+    '[cfs:ignore]',                                         // 标签
+    'at_depth_as_user',                                     // 建议改到
+    'depth</code> 改成 <code>0',                            // depth 改 0
+];
+for (const m of mustHave) {
+    assert.ok(html.includes(m), `HTML 应含 "${m}", 实际 html 片段:\n${html.slice(0, 500)}...`);
+}
+pass(`HTML 全部 ${mustHave.length} 个关键字段验证通过`);
+
+// 不足 3 轮 → empty 状态
+__testHooks.injectRingBuffer(fx.ringBuffer.slice(0, 1));
+const htmlEmpty = await RSI.genDriftPanel({ _testEntries: fx.activeLoreEntries });
+assert.ok(htmlEmpty.includes('再发') && htmlEmpty.includes('条消息后开始检测'));
+pass('insufficient 状态渲染正确');
+
+// 全 stable → ok 状态 (mock: 注入 5 轮完全相同的 ring buffer)
+const stableRing = Array.from({ length: 5 }, () => fx.ringBuffer[0].slice());
+__testHooks.injectRingBuffer(stableRing);
+const htmlOk = await RSI.genDriftPanel({ _testEntries: fx.activeLoreEntries });
+assert.ok(htmlOk.includes('已达架构上限'), `ok 状态应显示"已达架构上限", 实际: ${htmlOk.slice(0, 200)}`);
+pass('stable 状态渲染正确');
+
+// none 分流（用骰池 block 但传空 entries）
+__testHooks.injectRingBuffer(fx.ringBuffer);
+const htmlNone = await RSI.genDriftPanel({ _testEntries: [] });
+assert.ok(htmlNone.includes('未在 worldbook 找到来源'), 'none 分流文案');
+assert.ok(htmlNone.includes('文本指纹'), '指纹引导');
+pass('none 分流渲染正确');
+
 console.log(`\n=== 全部 ${testCount} 项断言通过 ===`);

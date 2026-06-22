@@ -779,6 +779,74 @@ async function _findUnstableEntries(opts) {
     return { status: 'ok', roundsCount: N, candidates };
 }
 
+// === 2026-06-22 v6.4 Drift Panel · HTML 渲染（先因后果 + 三路分流） ===
+function _escapeHtmlDrift(s) {
+    if (s == null) return '';
+    return String(s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+async function _genDriftPanel(opts) {
+    const r = await _findUnstableEntries(opts);
+    if (r.status === 'insufficient') {
+        return `<div class="cfs-drift-empty" style="color:#9aa0a6;font-size:11px;padding:8px 4px">再发 ${r.needed} 条消息后开始检测（已观察 ${r.roundsCount}/3 轮）。</div>`;
+    }
+    if (r.candidates.length === 0) {
+        return `<div class="cfs-drift-ok" style="color:#9ed28a;font-size:11px;padding:8px 4px">✅ 前缀区没有"每轮变"的条目，cache 命中率已达架构上限。</div>`;
+    }
+
+    const lines = [];
+    // 顶部"为什么"段（DC 奶人友好白话）
+    lines.push('<div class="cfs-drift-why" style="background:#1a1a1f;border-left:3px solid #ffa726;padding:8px 10px;margin:4px 0;color:#cfcfd5;font-size:11px;line-height:1.6">');
+    lines.push(`<strong style="color:#ffa726">⚠️ 为什么这是问题</strong><br>`);
+    lines.push(`检测到 ${r.candidates.length} 处 prefix 区内容每轮都在变。<br>`);
+    lines.push(`DeepSeek / Claude 的 cache 是「<u>逐字符比对</u>」 — 前缀里任何一个字一变，<br>`);
+    lines.push(`它后面的所有内容（哪怕完全没变）都会 cache miss。<br>`);
+    lines.push(`<em>在前缀区有"每轮变"的条目 = 后面全部白送钱。</em>`);
+    lines.push('</div>');
+
+    for (let i = 0; i < r.candidates.length; i++) {
+        const c = r.candidates[i];
+        lines.push('<div class="cfs-drift-card" style="border:1px solid #444;border-radius:4px;padding:10px;margin:6px 0;background:#161618">');
+        if (c.matchType === 'single') {
+            const h = c.hits[0];
+            lines.push(`<div style="color:#ffa726;font-weight:bold;margin-bottom:6px">⚠️ 「${_escapeHtmlDrift(h.comment || '(无名条目)')}」</div>`);
+            lines.push('<div style="font-size:11px;color:#cfcfd5;line-height:1.7">');
+            lines.push(`📍 <b>在哪</b>：${_escapeHtmlDrift(h.book)} / uid <code>${_escapeHtmlDrift(String(h.uid))}</code><br>`);
+            lines.push(`📊 <b>现状</b>：当前位置 <code>${_escapeHtmlDrift(h.position)}</code><br>`);
+            lines.push(`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 跨 ${c.observedRounds} 轮观察 → 出现 ${c.distinctHashes} 个不同 hash<br>`);
+            lines.push(`💸 <b>损失</b>：变化区约 ${c.variableLen.toLocaleString()} 字符，块总长 ${c.len.toLocaleString()} 字符<br>`);
+            lines.push(`&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 反查匹配子串 ${h.matchLen} 字符（置信度高）`);
+            lines.push('</div>');
+            lines.push('<div style="margin-top:8px;padding:6px 8px;background:#0e0e0f;border-radius:3px;font-size:11px;color:#9ed28a;line-height:1.7">');
+            lines.push('🔧 <b>怎么改（3 步）</b><br>');
+            lines.push(`① ST → 角色卡 → 世界书 → 找到 <code>${_escapeHtmlDrift(h.book)}</code> 里 uid <code>${_escapeHtmlDrift(String(h.uid))}</code> 这条<br>`);
+            lines.push(`② 在条目【<b>名称</b>】最前面加：<code class="cfs-drift-copy" data-copy="[cfs:ignore]" style="cursor:pointer;background:#2a2a2e;padding:1px 5px;border-radius:2px" title="点击复制">[cfs:ignore]</code><br>`);
+            lines.push(`③ <code>position</code> 改成 <code>at_depth_as_user</code>，<code>depth</code> 改成 <code>0</code>，保存`);
+            lines.push('</div>');
+        } else if (c.matchType === 'multi') {
+            lines.push(`<div style="color:#ffa726;font-weight:bold;margin-bottom:6px">⚠️ 检测到 ${c.hits.length} 条候选 — 请逐条核对</div>`);
+            lines.push('<div style="font-size:11px;color:#cfcfd5;line-height:1.7">CFS 无法精确判断元凶（多条 entry 内容相似 / 合并蓝灯 / 复制粘贴）。请逐条打开核对，对实际生效的那条做 3 步修复（加 [cfs:ignore] + position 改 at_depth_as_user + depth 0）：</div>');
+            lines.push('<ul style="font-size:11px;color:#cfcfd5;margin:4px 0 0 16px;padding:0">');
+            for (const h of c.hits) {
+                lines.push(`<li>「${_escapeHtmlDrift(h.comment || '(无名)')}」 — ${_escapeHtmlDrift(h.book)} / uid <code>${_escapeHtmlDrift(String(h.uid))}</code> / pos <code>${_escapeHtmlDrift(h.position)}</code> / 匹配 ${h.matchLen}c</li>`);
+            }
+            lines.push('</ul>');
+        } else {
+            lines.push(`<div style="color:#ffa726;font-weight:bold;margin-bottom:6px">⚠️ 未在 worldbook 找到来源</div>`);
+            lines.push('<div style="font-size:11px;color:#cfcfd5;line-height:1.7">这条波动 (block #' + c.blockIdx + ', ' + c.role + ' role) 不来自当前角色绑定的 worldbook，可能来自：<br>');
+            lines.push('• <b>预设管理器</b>中的 prompt（含 <code>{{lastusermessage}}</code> / <code>{{datetime}}</code> 等动态宏）<br>');
+            lines.push('• <b>角色卡</b>的 description / first_mes / scenario 字段<br>');
+            lines.push('• <b>第三方扩展</b>往 chat 拼装时注入<br>');
+            lines.push('复制下面这段文本指纹，去预设管理器或角色卡编辑器搜索定位：</div>');
+            lines.push(`<pre style="background:#0e0e0f;border:1px solid #333;border-radius:3px;padding:6px 8px;font-size:10px;color:#9ed28a;white-space:pre-wrap;word-break:break-all;margin:6px 0 0;max-height:120px;overflow:auto">${_escapeHtmlDrift(c.fingerprint)}</pre>`);
+        }
+        lines.push('</div>');
+    }
+    return lines.join('\n');
+}
+
 // 2026-06-21 v6 阶段 D：drift candidates 给 PETL 漏扫补充
 // 返回 postHistoryBlocks 中 status='dynamic' 的 contentSlice 数组
 // PETL 拿这些 contentSlice 反查 worldbook entry：哪条 entry 的 content 含某 slice
@@ -829,6 +897,7 @@ export const RSI = {
     getDriftCandidates: _getDriftCandidates, // v6 阶段 D: PETL 漏扫补充入口
     getActiveLoreEntries: _getActiveLoreEntries, // v6.4 Drift Panel: 反查源数据
     findUnstableEntries: _findUnstableEntries,   // v6.4 Drift Panel: 主入口
+    genDriftPanel: _genDriftPanel,               // v6.4 Drift Panel: HTML 渲染
     genSimpleOutput: _genSimpleOutput,
     genFullOutput: _genFullOutput,
     resetBuffer: () => { _ringBuffer.length = 0; },
