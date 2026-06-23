@@ -1887,9 +1887,10 @@ void _r;
  setTimeout(_registerV31Plugin, 0);
 
  // ============================================================
- // 2026-06-21 v6 阶段 B：切卡自动归零 dynamic 类
- // LS toggle `cfs-suite/auto_zero_dynamic_on_chat_change`（默认 '1' 开）
- // 切卡后延 1.5s 等 ST 绑定新卡 worldbook → scanAll → applyFixesByCategory('dynamic', silent)
+ // 2026-06-21 v6 阶段 B：切卡自动归零（v6.5 扩展为全量三大块）
+ // LS toggle `cfs-suite/auto_zero_dynamic_on_chat_change`（默认 '1' 开）—— key 名保留向前兼容
+ // 切卡后延 1.5s 等 ST 绑定新卡 worldbook → scanAll → applyFixesByCategory('all', silent)
+ // v6.5：从仅修 dynamic 扩展为修 db + mvu + dynamic 三大块，消除"二次切卡 db/mvu 不重扫"用户体感延迟
  // ============================================================
  const LS_AUTO_ZERO_DYN = 'cfs-suite/auto_zero_dynamic_on_chat_change';
  function _isAutoZeroDynEnabled() {
@@ -1904,14 +1905,19 @@ void _r;
    setTimeout(async function () {
     try {
      await scanAll();
-     const n = await applyFixesByCategory('dynamic', { silent: true, skipConfirm: true });
+     const n = await applyFixesByCategory('all', { silent: true, skipConfirm: true });
      if (n > 0) {
-      console.log('[CFS-PSIS] ⚡ 切卡自动归零: ' + n + ' 条动态注入');
+      console.log('[CFS-PSIS] ⚡ 切卡自动归零: ' + n + ' 条 (db/mvu/dynamic 三大块)');
       try {
        if (typeof toastr !== 'undefined' && toastr.success) {
-        toastr.success('⚡ CFS 已自动归零 ' + n + ' 条动态注入 entry', 'CFS-Suite', { timeOut: 5000 });
+        toastr.success('⚡ CFS 已自动归零 ' + n + ' 条受控 entry', 'CFS-Suite', { timeOut: 5000 });
        }
       } catch (_eToast) {}
+      // v6.5：通过 NC.report 同步状态给胶囊状态条
+      try {
+       const _ncCC = NC();
+       if (_ncCC) _ncCC.report('psis', { ok: true, summary: '切卡自动归零 ' + n + ' 条 (db/mvu/dynamic)' });
+      } catch (_eNC) {}
       if (D.getElementById(PANEL_ID)) render();
      }
     } catch (e) { console.error('[CFS-PSIS] 切卡自动归零异常', e); }
@@ -1933,7 +1939,7 @@ void _r;
    setEnabled: _setAutoZeroDyn,
    runNow: async function () {
     await scanAll();
-    return applyFixesByCategory('dynamic', { silent: true, skipConfirm: true });
+    return applyFixesByCategory('all', { silent: true, skipConfirm: true });
    },
   };
   // 2026-06-21 v6 阶段 C：暴露 PSIS 识别 patterns 给 PETL 复用

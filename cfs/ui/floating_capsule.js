@@ -16,7 +16,7 @@
  */
 
 const TAG = '[CFS-Suite/ui]';
-const VERSION = '6.4.0';
+const VERSION = '6.5.0';
 const LS_POS_KEY = 'cfs-suite/ui/capsule_position_v2';
 // 一次性清理 v1 旧 key：v1 默认右下，部分手机机型不可见；v2 改默认右上
 // 老用户升级后 v2 不存在 → 走新默认 CSS（右上角）→ 不再被 ST #send_form / iOS home indicator 遮住
@@ -441,13 +441,33 @@ function _updateCapsuleStatus(capsule) {
     // Day 11: 文字写进 .capsule-text 子元素（icon 由 CSS ::before 控制 + 移动端隐藏 text）
     const textEl = capsule.querySelector('.capsule-text');
     if (!textEl) return; // DOM 异常兜底（理论不可达）
+
+    // v6.5: 从 NC._peekPending 拿 PSIS R1 最近上报，作为胶囊文字后缀
+    // 解决用户体感"PSIS R1 是不是自动跑了"的疑问 —— 不开胶囊也能看到指示符
+    let psisSuffix = '';
+    let psisTooltip = '';
+    try {
+        const psisRpt = window.CFS4?.NotificationCenter?._peekPending?.()?.psis;
+        if (psisRpt) {
+            psisTooltip = (psisRpt.ok ? '🛡 PSIS R1 ✓ ' : '🛡 PSIS R1 ✗ ') + (psisRpt.summary || '');
+            const m = (psisRpt.summary || '').match(/(\d+)/);
+            if (psisRpt.ok) {
+                const n = m ? parseInt(m[1], 10) : 0;
+                psisSuffix = n > 0 ? ` · 🛡修复${n}` : ' · 🛡✓';
+            } else {
+                psisSuffix = ' · 🛡✗';
+            }
+        }
+    } catch (_ePsisPeek) {}
+
     if (mounted === total && (phase === 'DONE' || phase === 'READY_FULL')) {
-        textEl.textContent = `CFS缓存优化器 · ${modeLbl.text}`;
+        textEl.textContent = `CFS缓存优化器 · ${modeLbl.text}${psisSuffix}`;
     } else if (mounted === total) {
-        textEl.textContent = `CFS缓存优化器 · ${_phaseLabel(phase).text}`;
+        textEl.textContent = `CFS缓存优化器 · ${_phaseLabel(phase).text}${psisSuffix}`;
     } else {
         textEl.textContent = `CFS缓存优化器 · 加载中 ${mounted}/${total}`;
     }
+    if (psisTooltip) textEl.title = psisTooltip;
 }
 
 // ===== 持久化日志（panel re-render 不丢历史，最多保留 50 条）=====
