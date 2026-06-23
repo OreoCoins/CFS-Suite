@@ -68,7 +68,7 @@ import './cfs/core/cfs4_auto_cleanup.js';
 import './cfs/ui/floating_capsule.js';
 
 const TAG = '[CFS-Suite]';
-const VERSION = '6.4.0';
+const VERSION = '6.5.0';
 
 console.log(`${TAG} v${VERSION} loading...`);
 

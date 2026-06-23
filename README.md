@@ -3,7 +3,11 @@
 > **Cache-Friendly Scanner 套餐版** —— SillyTavern 原生扩展。
 > CFS V4.9.3 完整接管层 + 浮动胶囊 6.2 UI,**装一个 = 装两个**(CFS 接管层 + CFS-MVU 套餐版酒馆助手脚本)。
 >
-> 当前版本:`v6.2.0` — **命中率退化根因修复(实测 50.8% → 91.5%)** + character_book 接管 + 零第三方依赖持久化 + PSIS+ 启发式 unknown 接管 + 操作记录 modal + LS 5MB quota 瘦身 + v4.9 严格模式
+> 当前版本:`v6.5.0` —— PSIS R1 切卡全量重扫三大块 + 胶囊 🛡 状态指示符。详见 [doc/v6.5-release-notes.md](doc/v6.5-release-notes.md)。
+>
+> 历史版本要点:
+> - `v6.4.0` 砍 PETL + 静默清 `[CFS4_AUTO]` 残留标签
+> - `v6.2.0` 命中率退化根因修复(实测 50.8% → 91.5%) + character_book 接管 + 零第三方依赖持久化 + PSIS+ 启发式 unknown 接管 + 操作记录 modal + LS 5MB quota 瘦身 + v4.9 严格模式
 
 ---
 
