@@ -513,8 +513,8 @@ void _r;
   return '<details class="cfs-sem" id="cfs-sem-root" open>' +
    '<summary>📦 世界书优化 SEM — 候选扫描 + 迁移 + 回滚</summary>' +
    '<div class="cfs-sem-body" id="cfs-sem-body">' +
-   '<div class="cfs-sem-hint">点 <b>🔍 扫描候选</b> 查找<b>零动态宏</b>的长 entry 迁到 prefix 区。' +
-   '<br><span style="color:#888;font-size:11px">推荐用 WM 统一管理 worldbook 位置；SEM 仅迁 PETL 不处理的纯静态长 entry 兜底。含 mvu/EJS/getvar 的 entry 由 PETL 自动踢 chat 末尾，不进 SEM 候选。</span></div>' +
+   '<div class="cfs-sem-hint">扫描<b>纯静态长 entry</b> → 用户授权迁到 <b>before_character_definition</b>（prefix 区）参与 cache。含动态宏的 entry 不进候选（PSIS pattern 精准识别）。' +
+   '<br><span style="color:#888;font-size:11px">不动 character_book，所有迁移有 metadata 备份 + 一键回滚。</span></div>' +
    '<div class="cfs-sem-actions">' +
    '<button id="cfs-sem-btn-scan" class="cfs-btn cfs-btn-primary">🔍 扫描候选</button>' +
    '<button id="cfs-sem-btn-mig-list" class="cfs-btn">📋 已迁移列表</button>' +
@@ -526,10 +526,11 @@ void _r;
 
  function _semRenderCandList(cands, driftedCnt) {
   driftedCnt = driftedCnt || 0;
-  // 2026-06-22 修法 2：drift 不一定是"错"——PETL 或 WM 把 entry 拉到 at_depth_as_user
-  // 才是正确位置（实测 80%+ vs SEM 推 prefix 70%+）。文案改中性，不再煽动用户重迁。
+  // v6.5: 还原 4.9 主动迁移角色。PSIS pattern 已精准过滤含动态宏 entry，
+  // SEM 候选都是纯静态长 entry（risk=safe），理论上应进 prefix 区。
+  // 漂移 = 外部工具改回，提示用户可重迁。
   var driftHintHtml = driftedCnt > 0
-   ? '<div class="cfs-sem-drift-warn" style="color:#888">ℹ 有 <b>' + driftedCnt + '</b> 条已迁移条目当前不在 prefix 区（被 PETL/WM/手动改回）。多数情况下这是正确的，prefix cache 字节级，含动态宏的 entry 留 chat 末尾才能稳定命中。如需强制拉回，到「📋 已迁移列表」操作。</div>'
+   ? '<div class="cfs-sem-drift-warn" style="color:#ffa726">⚠ <b>' + driftedCnt + '</b> 条已迁移条目当前不在 prefix 区（被外部改回）。如确认是纯静态长内容，到「📋 已迁移列表」一键重迁回 prefix。</div>'
    : '';
   if (!cands || cands.length === 0) {
    return driftHintHtml + '<div class="cfs-sem-empty">无新增候选 — 当前 worldbook 已无满足条件的未迁移 entry</div>';
@@ -592,16 +593,17 @@ void _r;
     '</tr>';
   }
 
-  // 2026-06-22 修法 2：drift 改中性表述，建议优先回滚而非重迁
+  // v6.5: 还原 4.9 主动迁移角色。v6.4 PETL 已砍，SEM 候选都是 PSIS pattern 判 safe 的纯静态长 entry。
+  // 漂移 = 外部工具（手动 / WM / 其他）改回，可一键重迁恢复 prefix 位置。
   var driftWarn = driftedCnt > 0
-   ? '<div class="cfs-sem-drift-warn" style="color:#888">ℹ 有 <b>' + driftedCnt + '</b> 条不在 prefix。多数是 PETL 自动把含动态宏 entry 踢到 chat 末尾（正确行为）。如这些 entry 确实是纯静态长内容，可「↩ 回滚选中」清掉 SEM 记录让 PETL 不再扫；不建议「⚡ 强制重迁」。</div>'
+   ? '<div class="cfs-sem-drift-warn" style="color:#ffa726">⚠ <b>' + driftedCnt + '</b> 条不在 prefix。SEM 候选都是纯静态长 entry（不含动态宏），漂移多是外部工具改回。可「⚡ 重迁回 prefix」恢复，或「↩ 回滚选中」清除 SEM 记录。</div>'
    : '';
 
   return scopeHint +
    '<div class="cfs-sem-summary">已迁移 <b>' + mig.length + '</b> 条' + (driftedCnt > 0 ? '（其中 <span style="color:#888">' + driftedCnt + '</span> 条不在 prefix）' : '') + '</div>' +
    driftWarn +
    '<div class="cfs-sem-controls">' +
-   (driftedCnt > 0 ? '<button id="cfs-sem-btn-remig-drift" class="cfs-btn" style="opacity:0.7">⚡ 强制重迁回 prefix (' + driftedCnt + ')</button> ' : '') +
+   (driftedCnt > 0 ? '<button id="cfs-sem-btn-remig-drift" class="cfs-btn cfs-btn-primary">⚡ 重迁回 prefix (' + driftedCnt + ')</button> ' : '') +
    '<button id="cfs-sem-btn-rb-sel" class="cfs-btn">↩ 回滚选中</button> ' +
    '<button id="cfs-sem-btn-rb-all" class="cfs-btn">↩↩ 全部回滚</button> ' +
    '<button id="cfs-sem-btn-back" class="cfs-btn">⬅ 返回扫描</button>' +
