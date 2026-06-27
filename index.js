@@ -64,6 +64,8 @@ import './cfs/core/full_refresh_scheduler.js';
 //   决策：worldbook 位置管理交给 WM；CFS 不再自动接管 entry position。
 // 2026-06-23 v6.4: 启动静默清 [CFS4_AUTO] 标签 (独立 worldbook only, character_book 不动)
 import './cfs/core/cfs4_auto_cleanup.js';
+// 2026-06-27 v6.5 恢复：诊断面板（从 v6.6 task 9 backup tag 摘出）— 必须在 floating_capsule 之前
+import './cfs/ui/diagnostic_panel.js';
 // Day 4 附加 UI：右下角浮动胶囊 + 折叠面板（完整 panel.js 留 Day 6）
 import './cfs/ui/floating_capsule.js';
 

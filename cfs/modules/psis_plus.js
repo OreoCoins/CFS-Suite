@@ -168,10 +168,14 @@ void _r;
  //   2026-06-22 v6.2.0 真机调参（双人成行 v7.0）：原 plan 把 `<user> <user_input> <chathistory>`
  //   也列入是过保守 — 这些在大块提示词里常见字面引用（思维链/输出格式），全文匹配会误杀。
  //   结构性禁令交给 _psisPlusTagsBalanced（独立成行 + 短块孤立标签）处理。
+ // 2026-06-27 v6.5 Task 3：补 lastcharmessage + 全 lowercase（Step B 改大小写不敏感比对）
+ //   原因：MJ 类预设含 `{{lastUserMessage}}` 驼峰，旧版字面比对漏拒 → 被 PSIS+ 误前移到 prefix
+ //   实测梦鲸思客 V4 #28 写作模式 / #29 大总结模式正是这种漏拒导致 prefix 击穿
  var SKIP_PIN_MARKERS = [
   '{{lastusermessage}}',
   '{{lastmessage}}',
-  '<STABLE_BATCH',
+  '{{lastcharmessage}}',
+  '<stable_batch',
  ];
 
  // 软拒动态宏（含 → uncertain 而非 keep_after）：
@@ -249,8 +253,10 @@ void _r;
   if (/\[cfs:keep-after-history\]/i.test(name) || /\[cfs:ignore\]/i.test(name)) return 'keep_after';
 
   // Step B · 硬拒名单（真动态宏，全文匹配即拒）
+  // 2026-06-27 v6.5 Task 3：大小写不敏感（MJ 预设 `{{lastUserMessage}}` 驼峰漏拒补漏）
+  var contentLower = content.toLowerCase();
   for (var i = 0; i < SKIP_PIN_MARKERS.length; i++) {
-   if (content.indexOf(SKIP_PIN_MARKERS[i]) >= 0) return 'keep_after';
+   if (contentLower.indexOf(SKIP_PIN_MARKERS[i]) >= 0) return 'keep_after';
   }
 
   // Step C · XML 标签配对（独立成行 + 短块孤立标签判定）
@@ -262,6 +268,10 @@ void _r;
   if (/\{\{(date|time|datetime)\}\}/i.test(content)) return 'uncertain';
   if (/getvar\s*\(/i.test(content)) return 'uncertain';
   if (/<%[^%]*%>/.test(content)) return 'uncertain';
+  // 2026-06-27 v6.5 Task 2：globalvar 硬拒（用户切"模式按钮"即漂 → 反向击穿）
+  // 实测梦鲸思客 V4 #18 新实验文风 / #22 色色推进 / #28 写作模式等含 setglobalvar/getglobalvar
+  // 用户在 ST UI 点"文风/字数/推进"按钮触发 setglobalvar → 下轮 getglobalvar 渲染变 → prefix 击穿
+  if (/\{\{(get|set)globalvar::/i.test(content)) return 'keep_after';
   // Step D-soft · persona/char 占位（含字面 {{user}}/{{char}} → 切 persona 时 prefix cache 断风险）
   for (var si = 0; si < SOFT_SKIP_MARKERS.length; si++) {
    if (content.indexOf(SOFT_SKIP_MARKERS[si]) >= 0) return 'uncertain';
@@ -675,6 +685,10 @@ void _r;
   return '<details class="cfs-psis-plus" id="cfs-psisp-root" open>' +
    '<summary>📐 提示词结构 PSIS PLUS — 检测乱序 + 重排 + 自动储存到预设（可还原）</summary>' +
    '<div class="cfs-psisp-body" id="cfs-psisp-body">' +
+   // 2026-06-27 v6.5 Task 4：显式开关 — 用户点「还原」会自动关掉，防自动重排再推翻
+   '<div class="cfs-psisp-toggle" style="margin:6px 0;padding:6px 8px;background:rgba(255,255,255,0.03);border-radius:4px;font-size:11px;color:#aaa">' +
+   '<label style="cursor:pointer;user-select:none"><input type="checkbox" id="cfs-psisp-autorepair-toggle" style="vertical-align:middle;margin-right:6px"/>自动重排（切预设 / 切卡 / 启动时自动跑） — 点「↩ 还原上次」会自动关闭，防覆盖</label>' +
+   '</div>' +
    '<div class="cfs-psisp-hint">点 <b>🔍 检测排序</b> 扫描 chat-completion 预设里被错插到 chatHistory 之后的稳态块</div>' +
    '<div class="cfs-psisp-actions">' +
    '<button id="cfs-psisp-btn-scan" class="cfs-btn cfs-btn-primary">🔍 检测排序</button>' +
@@ -892,6 +906,16 @@ void _r;
   var resultDiv = D.getElementById('cfs-psisp-result');
   var btnScan = D.getElementById('cfs-psisp-btn-scan');
   var btnHist = D.getElementById('cfs-psisp-btn-hist');
+  // 2026-06-27 v6.5 Task 4：autorepair checkbox 初始化 + change handler
+  var autoCb = D.getElementById('cfs-psisp-autorepair-toggle');
+  if (autoCb) {
+   autoCb.checked = _psisPlusIsAutorepairEnabled();
+   autoCb.onchange = function () {
+    _psisPlusSetAutorepair(autoCb.checked);
+    var NC = _GLOBAL.CFS4 && _GLOBAL.CFS4.NotificationCenter;
+    if (NC) NC.notify('psis_plus_autorepair_toggled', { enabled: autoCb.checked });
+   };
+  }
 
   async function _doScan() {
    if (!resultDiv) return;
@@ -945,7 +969,11 @@ void _r;
    var r = await _psisPlusRestore(0);
    var NC = _GLOBAL.CFS4 && _GLOBAL.CFS4.NotificationCenter;
    if (r.ok) {
-    if (NC) NC.notify('psis_plus_restored', { timestamp: new Date(r.timestamp).toLocaleString(), preset: r.presetName });
+    // 2026-06-27 v6.5 Task 4：还原成功后自动关闭 autorepair，防止下次切预设/切卡/F5 再被推翻
+    _psisPlusSetAutorepair(false);
+    // 同步清掉 fingerprint cache 里这个预设的项，避免后续手动 autoRepair 误以为"未变"
+    if (r.presetName && _psisPlusFingerprintCache) delete _psisPlusFingerprintCache[r.presetName];
+    if (NC) NC.notify('psis_plus_restored', { timestamp: new Date(r.timestamp).toLocaleString(), preset: r.presetName, autorepair_off: true });
    } else {
     if (NC) NC.notify('psis_plus_failed', { detail: r.reason });
    }
@@ -981,7 +1009,10 @@ void _r;
       var r = await _psisPlusRestore(idx);
       var NC = _GLOBAL.CFS4 && _GLOBAL.CFS4.NotificationCenter;
       if (r.ok) {
-       if (NC) NC.notify('psis_plus_restored', { timestamp: new Date(r.timestamp).toLocaleString(), preset: r.presetName });
+       // 2026-06-27 v6.5 Task 4：同主路径还原 — 关闭 autorepair + 清 fingerprint
+       _psisPlusSetAutorepair(false);
+       if (r.presetName && _psisPlusFingerprintCache) delete _psisPlusFingerprintCache[r.presetName];
+       if (NC) NC.notify('psis_plus_restored', { timestamp: new Date(r.timestamp).toLocaleString(), preset: r.presetName, autorepair_off: true });
       } else {
        if (NC) NC.notify('psis_plus_failed', { detail: r.reason });
       }
@@ -1014,6 +1045,62 @@ void _r;
   judgeUnknown: _psisPlusJudgeUnknown, // 暴露启发式判定供调试
  };
 
+ // === 2026-06-27 v6.5 Task 4：显式开关 + GLM #6 fingerprint dedup ===
+ // 用户痛点：点「↩ 还原上次」恢复 prompt_order 后，切预设/切卡/F5 又自动 autoRepair 推翻
+ // 修法：① LS 显式开关；② 还原顺手关；③ 预设 fingerprint dedup（GLM #6 渐进式污染）
+ var PSISP_AUTOREPAIR_LS_KEY = 'cfs_psisp_autorepair';
+ function _psisPlusIsAutorepairEnabled() {
+  try { return localStorage.getItem(PSISP_AUTOREPAIR_LS_KEY) !== 'off'; } catch (e) { return true; }
+ }
+ function _psisPlusSetAutorepair(on) {
+  try { localStorage.setItem(PSISP_AUTOREPAIR_LS_KEY, on ? 'on' : 'off'); } catch (e) {}
+  // UI checkbox 同步（如果已挂载）
+  try {
+   var cb = document.getElementById('cfs-psisp-autorepair-toggle');
+   if (cb) cb.checked = !!on;
+  } catch (e) {}
+ }
+ // GLM #6：每预设 prompt_order fingerprint 防切预设渐进式污染
+ var _psisPlusFingerprintCache = {};
+ function _psisPlusFingerprint() {
+  try {
+   var oai = _psisPlusGetOaiSettings();
+   if (!oai || !Array.isArray(oai.prompt_order)) return null;
+   var presetName = _psisPlusGetPresetName();
+   var charId = _psisPlusGetCharId();
+   var orderIdx = _psisPlusFindOrderIndex(oai, charId);
+   if (orderIdx < 0) return null;
+   var order = oai.prompt_order[orderIdx].order || [];
+   var s = '';
+   for (var i = 0; i < order.length; i++) {
+    var x = order[i];
+    if (x) s += (x.identifier || '?') + ':' + (x.enabled === false ? '0' : '1') + '|';
+   }
+   var h = 0;
+   for (var j = 0; j < s.length; j++) { h = ((h << 5) - h + s.charCodeAt(j)) | 0; }
+   return { preset: presetName || '?', hash: h };
+  } catch (e) { return null; }
+ }
+ function _psisPlusFingerprintChanged() {
+  var fp = _psisPlusFingerprint();
+  if (!fp) return true; // 拿不到 fingerprint 时不阻断（保留旧行为）
+  var last = _psisPlusFingerprintCache[fp.preset];
+  _psisPlusFingerprintCache[fp.preset] = fp.hash;
+  return last !== fp.hash;
+ }
+ // 守门 wrapper：事件钩入口用这个；F12 手动 autoRepair() 仍直入不被守门
+ function _psisPlusGuardedAutoRepair(source) {
+  if (!_psisPlusIsAutorepairEnabled()) {
+   console.log('[PSIS+] autoRepair OFF (LS=off, source=' + source + ') — 跳过');
+   return Promise.resolve({ ok: false, reason: 'autorepair_off' });
+  }
+  if (!_psisPlusFingerprintChanged()) {
+   console.log('[PSIS+] autoRepair skip — preset fingerprint 未变 (source=' + source + ')');
+   return Promise.resolve({ ok: false, reason: 'fingerprint_unchanged' });
+  }
+  return _psisPlusAutoRepair({ source: source });
+ }
+
  // === 启动期挂钩 ===
  // 预设是常驻的，跟会话/角色卡无关，触发点：
  //   1) app_ready 事件 — ST 主体加载完
@@ -1023,8 +1110,8 @@ void _r;
   if (typeof eventOn === 'function') {
    eventOn('oai_preset_changed_after', function () {
     _psisPlusStartupDone = false;
-    // 2026-06-22 v6.2.0 切预设后走 auto-repair（含启发式 auto_unknown）
-    setTimeout(function () { _psisPlusAutoRepair({ source: 'oai_preset_changed_after' }); }, 1000);
+    // 2026-06-27 v6.5 Task 4：走守门 wrapper（开关 + fingerprint）
+    setTimeout(function () { _psisPlusGuardedAutoRepair('oai_preset_changed_after'); }, 1000);
    });
    // 2026-06-22 v6.2.0 · chat_id_changed 兜底触发 PSIS+ AutoRepair
    //   原因：savePreset → updateList → trigger('change') → applyChatCompletionPreset → 再次 emit
@@ -1036,16 +1123,16 @@ void _r;
    eventOn('chat_id_changed', function () {
     if (_psisPlusChatChangeTimer) clearTimeout(_psisPlusChatChangeTimer);
     _psisPlusChatChangeTimer = setTimeout(function () {
-     _psisPlusAutoRepair({ source: 'chat_id_changed' });
+     _psisPlusGuardedAutoRepair('chat_id_changed');
     }, 2000);
    });
   }
   if (typeof eventOnce === 'function') {
    eventOnce('app_ready', function () {
-    setTimeout(_psisPlusPassiveScan, 500); // hydrate 后 auto-repair（PassiveScan 内部已切到 autoRepair）
+    setTimeout(function () { _psisPlusGuardedAutoRepair('app_ready'); }, 500);
    });
   } else {
-   setTimeout(_psisPlusPassiveScan, 2000);
+   setTimeout(function () { _psisPlusGuardedAutoRepair('app_ready_fallback'); }, 2000);
   }
  } catch (e) {}
 

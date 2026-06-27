@@ -1115,6 +1115,10 @@ function _renderPanel(panel) {
     html += '</div></details>';
     html += '</div>';
 
+    // 2026-06-27 v6.5 恢复：诊断面板 mount（从 v6.6 task 9 backup tag 摘出）
+    // 自带 <details>，作为独立 section 显示在 MVU 守护面板之前
+    html += '<div id="cfs-capsule-diagnostic-mount" style="margin-top:8px"></div>';
+
     // Day 10 修复 Day 5 假替代：PSIS / PSIS+ / SEM 入口 section
     // 之前 polyfill 注释说"用浮动胶囊替代"但根本没接 — 现在补上
     // 注意：PSIS+ / SEM 的 renderSection() 输出本身就是 <details>，外层不再套，否则要点两次
@@ -1294,6 +1298,21 @@ function _renderPanel(panel) {
             psisPlusMount.innerHTML = '<div style="color:#e88;padding:8px">⚠️ CFS4.PSISPlus 未挂，看 F12 [CFS V4.9.3 功能] 启动日志</div>';
         }
     } catch (eP) { console.warn('[CFS-Suite] 挂 PSIS+ section 失败', eP); }
+
+    // 2026-06-27 v6.5 恢复：诊断面板挂载（仿 PSIS+ 模式）
+    try {
+        const diag = window.CFS4?.DiagnosticPanel;
+        const diagMount = panel.querySelector('#cfs-capsule-diagnostic-mount');
+        if (diag?.renderSection && diagMount) {
+            diagMount.innerHTML = diag.renderSection();
+            if (typeof diag.bindEvents === 'function') {
+                try { diag.bindEvents(document, () => panel); }
+                catch (eD) { console.warn('[CFS-Suite] DiagnosticPanel bindEvents 失败', eD); }
+            }
+        } else if (diagMount) {
+            diagMount.innerHTML = '<div style="color:#888;padding:8px;font-size:11px">⚠ CFS4.DiagnosticPanel 未挂（看 F12 启动日志）</div>';
+        }
+    } catch (eD) { console.warn('[CFS-Suite] 挂诊断面板失败', eD); }
 
     try {
         const sem = window.CFS4?.SEM;
